@@ -1,10 +1,10 @@
-//! 网络参数快照（需求 11）。
+//! Network parameter snapshots (requirement 11).
 //!
-//! 目录结构：
+//! Directory layout:
 //!
 //! ```text
 //! /etc/wifisync/backup/
-//! ├─ initial/                  # 不可变初始化基线（权威还原源）
+//! ├─ initial/                  # immutable initial baseline (authoritative restore source)
 //! │  ├─ manifest.json
 //! │  ├─ config/{network,wireless,dhcp,firewall,system}
 //! │  └─ state.txt
@@ -12,7 +12,7 @@
 //! └─ pre-change-<ts>/
 //! ```
 //!
-//! 全部为文本，便于 diff 与体积控制。
+//! Everything is plain text, which keeps diffs easy and size under control.
 
 use crate::error::{SysError, SysResult};
 use crate::iwinfo;
@@ -26,7 +26,7 @@ use wifisync_core::backup::{
 use wifisync_core::config::WifisyncConfig;
 use wifisync_core::role::Roles;
 
-/// 快照目录内的配置子目录名。
+/// Name of the config subdirectory inside a snapshot directory.
 const CONFIG_SUBDIR: &str = "config";
 const STATE_FILE_NAME: &str = "state.txt";
 const MANIFEST_NAME: &str = "manifest.json";
@@ -51,7 +51,7 @@ impl SnapshotStore {
         &self.paths
     }
 
-    /// 初始化基线是否存在且可读。
+    /// Whether the initial baseline exists and is readable.
     pub fn initial_exists(&self) -> bool {
         self.paths
             .initial_snapshot_dir()
@@ -59,9 +59,9 @@ impl SnapshotStore {
             .exists()
     }
 
-    /// 服务启动时的第一件事：**建立（或校验）初始化基线**。
+    /// The first thing on service start: **establish (or verify) the initial baseline**.
     ///
-    /// 返回 `(manifest, created)`；`created = false` 表示本次只是复用已有基线。
+    /// Returns `(manifest, created)`; `created = false` means an existing baseline was reused.
     pub fn ensure_initial(&self, cfg: &WifisyncConfig) -> SysResult<(BackupManifest, bool)> {
         if self.initial_exists() {
             let dir = self.paths.initial_snapshot_dir();
@@ -82,7 +82,7 @@ impl SnapshotStore {
         }
     }
 
-    /// 建立一份快照。
+    /// Create a snapshot.
     pub fn create(
         &self,
         kind: SnapshotKind,
@@ -92,7 +92,7 @@ impl SnapshotStore {
         let created_at = now();
         let dir = self.dir_for(kind, created_at);
         if kind.is_immutable() && dir.exists() {
-            // 基线不可变：已存在就直接复用
+            // The baseline is immutable: reuse it as-is if it already exists
             return self.manifest(&dir);
         }
         let config_dir = dir.join(CONFIG_SUBDIR);
@@ -101,12 +101,12 @@ impl SnapshotStore {
         let mut manifest = BackupManifest::new(kind, created_at, &cfg.device_id, cfg.roles);
         manifest.managed_keys = managed_keys.to_vec();
         manifest.notes.push(format!(
-            "由 wifisync {} 在角色 [{}] 下创建",
+            "created by wifisync {} with roles [{}]",
             wifisync_core::VERSION,
             cfg.roles.to_uci_value()
         ));
 
-        // 1. uci 配置文件（存在才备份）
+        // 1. uci config files (backed up only if present)
         for pkg in self.paths.baseline_uci_files() {
             let source = self.paths.uci_file(pkg);
             if !source.exists() {
@@ -119,7 +119,7 @@ impl SnapshotStore {
                 .push(digest_of(&target, &format!("{}/{}", CONFIG_SUBDIR, pkg))?);
         }
 
-        // 2. 只读状态转储（ip / iwinfo / 网桥成员）
+        // 2. read-only state dump (ip / iwinfo / bridge members)
         let dump = iwinfo::capture_state(&self.paths);
         let state_path = dir.join(STATE_FILE_NAME);
         write_atomic(&state_path, dump.as_bytes())?;
@@ -127,7 +127,7 @@ impl SnapshotStore {
             .files
             .push(digest_of(&state_path, STATE_FILE_NAME)?);
 
-        // 3. 清单本身
+        // 3. the manifest itself
         let text = serde_json::to_string_pretty(&manifest)?;
         write_atomic(&dir.join(MANIFEST_NAME), text.as_bytes())?;
         Ok(manifest)
@@ -138,7 +138,7 @@ impl SnapshotStore {
         Ok(serde_json::from_str(&text)?)
     }
 
-    /// 列出全部快照元信息。
+    /// List metadata for all snapshots.
     pub fn list(&self) -> SysResult<Vec<SnapshotMeta>> {
         let root = self.paths.backup_dir();
         let mut items = Vec::new();
@@ -164,7 +164,7 @@ impl SnapshotStore {
         Ok(items)
     }
 
-    /// 校验快照完整性（重新计算 sha256）。
+    /// Verify snapshot integrity (recomputing sha256).
     pub fn verify(&self, dir: &Path) -> SysResult<VerifyReport> {
         let manifest = self.manifest(dir)?;
         let mut computed = Vec::new();
@@ -178,7 +178,7 @@ impl SnapshotStore {
         Ok(verify(&manifest, &computed))
     }
 
-    /// 按保留策略裁剪（`initial` 永不裁剪）。
+    /// Prune according to the retention policy (`initial` is never pruned).
     pub fn prune(&self, policy: &RetentionPolicy) -> SysResult<Vec<String>> {
         let snapshots = self.list()?;
         let doomed = policy.plan_prune(&snapshots);
@@ -188,8 +188,8 @@ impl SnapshotStore {
         Ok(doomed)
     }
 
-    /// 记录「本轮写入计划涉及的受管键」，写入到最近一份快照的清单里，
-    /// 供恢复时精确还原。
+    /// Record the "managed keys touched by this round's write plan" into the latest
+    /// snapshot's manifest, so restore can reproduce them precisely.
     pub fn annotate_managed_keys(&self, dir: &Path, keys: &[String]) -> SysResult<()> {
         let mut manifest = self.manifest(dir)?;
         for key in keys {
@@ -203,7 +203,8 @@ impl SnapshotStore {
         write_atomic(&dir.join(MANIFEST_NAME), text.as_bytes())
     }
 
-    /// 写入一份「工作标记」，把最近的 pre-change 快照路径记下来，供 apply-guard 回滚。
+    /// Write a "work marker" recording the latest pre-change snapshot path, used by
+    /// apply-guard for rollback.
     pub fn write_last_change_marker(&self, dir: &Path) -> SysResult<()> {
         self.paths.ensure_dir(&self.paths.run_dir())?;
         write_atomic(
@@ -220,7 +221,7 @@ impl SnapshotStore {
     }
 }
 
-/// 计算文件摘要。
+/// Compute a file digest.
 pub fn digest_of(path: &Path, rel_path: &str) -> SysResult<FileDigest> {
     let bytes = std::fs::read(path)?;
     let mut hasher = Sha256::new();
@@ -252,7 +253,7 @@ fn dir_size(dir: &Path) -> u64 {
     total
 }
 
-/// 首次启动时若没有 device-id，需要先补一个（快照清单里会用到）。
+/// On first start, generate a device-id if missing (the snapshot manifest needs it).
 pub fn ensure_device_id(paths: &Paths) -> SysResult<String> {
     let path = paths.device_id_file();
     if let Ok(text) = std::fs::read_to_string(&path) {
@@ -267,13 +268,13 @@ pub fn ensure_device_id(paths: &Paths) -> SysResult<String> {
     Ok(id)
 }
 
-/// 便捷函数：把角色集合写进清单的辅助。
+/// Convenience helper that writes a role set into a manifest.
 pub fn with_roles(mut manifest: BackupManifest, roles: Roles) -> BackupManifest {
     manifest.roles = roles;
     manifest
 }
 
-/// 断言基线存在，否则返回 fail-closed 错误。
+/// Assert that the baseline exists, otherwise return a fail-closed error.
 pub fn require_baseline(paths: &Paths) -> SysResult<()> {
     let dir = paths.initial_snapshot_dir();
     if dir.join(MANIFEST_NAME).exists() {
@@ -317,7 +318,10 @@ mod tests {
         assert!(first.files.iter().any(|f| f.path == "config/network"));
 
         let (second, created_again) = store.ensure_initial(&cfg).unwrap();
-        assert!(!created_again, "基线不可变，不应重复创建");
+        assert!(
+            !created_again,
+            "the baseline is immutable and must not be recreated"
+        );
         assert_eq!(second.created_at, first.created_at);
 
         let _ = std::fs::remove_dir_all(dir);

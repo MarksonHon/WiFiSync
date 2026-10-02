@@ -1,6 +1,6 @@
 [package]
 name = "wifisync-sys"
-description = "WifiSync 系统适配层：uci/netifd/sysfs/iwinfo 只读探测，以及快照、恢复与（仅 AP 的）配置写入"
+description = "WifiSync system adapter layer: read-only uci/netifd/sysfs/iwinfo probing plus snapshots, restore and AP-only configuration writes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

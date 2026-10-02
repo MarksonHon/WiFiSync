@@ -1,14 +1,17 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# LuCI 应用：WifiSync 管理界面
+# LuCI application: WifiSync management interface
 #
-# 依赖 LuCI 的 feed：include $(TOPDIR)/feeds/luci/luci.mk
-# 界面全部通过 ubus 对象 `wifisync`（由 rpcd exec 插件桥接）与后端通信。
+# Requires the LuCI feed: include $(TOPDIR)/feeds/luci/luci.mk
+# All views talk to the backend through the ubus object `wifisync`, which is
+# bridged by the rpcd exec plugin. Translations are picked up automatically
+# from the po/ directory and shipped as separate luci-i18n-wifisync-<lang>
+# packages.
 
 include $(TOPDIR)/rules.mk
 
-LUCI_TITLE:=LuCI app for WifiSync (家庭局域网组网)
-LUCI_DESCRIPTION:=WifiSync 管理界面：角色、网桥、Wi-Fi/KVR、准入、备份与故障恢复
+LUCI_TITLE:=LuCI app for WifiSync (home LAN networking)
+LUCI_DESCRIPTION:=WifiSync management interface: roles, bridge, Wi-Fi/KVR, admission, backup and failover
 LUCI_DEPENDS:=+wifisync +luci-base
 LUCI_PKGARCH:=all
 

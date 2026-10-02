@@ -1,26 +1,28 @@
-//! 备份 / 快照 / 恢复的**模型与决策**（需求 11）。
+//! **Models and decisions** for backup / snapshot / restore (requirement 11).
 //!
-//! 纪律：**启动先备份初始化网络，停止先恢复原有网络。**
+//! Discipline: **back up the initial network at startup, restore the original network at stop.**
 //!
-//! 这里只做纯计算：
-//! * [`BackupManifest`]：快照清单（含每文件 sha256 与 `managed_keys`）
-//! * [`RetentionPolicy`]：保留策略（`initial` 永不裁剪）
-//! * [`build_restore_plan`]：恢复计划（默认 `managed_only`，只动 wifisync 改过的键）
+//! Only pure computation happens here:
+//! * [`BackupManifest`]: snapshot manifest (per-file sha256 plus `managed_keys`)
+//! * [`RetentionPolicy`]: retention policy (`initial` is never pruned)
+//! * [`build_restore_plan`]: restore plan (defaults to `managed_only`, touching only keys wifisync
+//!   changed)
 
+use crate::message::Message;
 use crate::role::Roles;
 use serde::{Deserialize, Serialize};
 
-/// 快照格式版本。
+/// Snapshot format version.
 pub const SNAPSHOT_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotKind {
-    /// 不可变的初始化基线（权威还原源）。
+    /// Immutable initial baseline (the authoritative restore source).
     Initial,
-    /// 每次服务启动前的滚动快照。
+    /// Rolling snapshot taken before every service start.
     PreStart,
-    /// 每次写入前的滚动快照。
+    /// Rolling snapshot taken before every write.
     PreChange,
 }
 
@@ -40,13 +42,13 @@ impl SnapshotKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileDigest {
-    /// 相对快照目录的路径，如 `config/network`。
+    /// Path relative to the snapshot directory, e.g. `config/network`.
     pub path: String,
     pub sha256: String,
     pub size: u64,
 }
 
-/// 快照清单。
+/// Snapshot manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupManifest {
     pub format_version: u32,
@@ -54,10 +56,10 @@ pub struct BackupManifest {
     pub created_at: crate::Timestamp,
     pub device_id: String,
     pub wifisync_version: String,
-    /// 建立快照时的角色集合（用于恢复后的一致性提示）。
+    /// Role set at snapshot time (used for post-restore consistency hints).
     pub roles: Roles,
     pub files: Vec<FileDigest>,
-    /// 由 wifisync 改动过的 uci 键路径（`network.lan.ipaddr` 形式）。
+    /// uci key paths changed by wifisync (in `network.lan.ipaddr` form).
     pub managed_keys: Vec<String>,
     pub notes: Vec<String>,
 }
@@ -105,18 +107,29 @@ impl VerifyReport {
 
     pub fn summary(&self) -> String {
         if self.is_ok() {
-            return "备份完整性校验通过".to_string();
+            return "backup integrity check passed".to_string();
         }
         format!(
-            "备份校验失败：缺失 {} 项、内容变化 {} 项、多出 {} 项",
+            "backup check failed: {} missing, {} changed, {} extra",
             self.missing.len(),
             self.changed.len(),
             self.extra.len()
         )
     }
+
+    /// UI message describing the verification result.
+    pub fn summary_message(&self) -> Message {
+        if self.is_ok() {
+            return Message::new("backup.verify.ok");
+        }
+        Message::new("backup.verify.failed")
+            .param("missing", self.missing.len().to_string())
+            .param("changed", self.changed.len().to_string())
+            .param("extra", self.extra.len().to_string())
+    }
 }
 
-/// 对比清单与实际计算出的摘要。
+/// Compare the manifest against the actually computed digests.
 pub fn verify(manifest: &BackupManifest, computed: &[FileDigest]) -> VerifyReport {
     let mut report = VerifyReport::default();
     for expected in &manifest.files {
@@ -137,7 +150,7 @@ pub fn verify(manifest: &BackupManifest, computed: &[FileDigest]) -> VerifyRepor
     report
 }
 
-/// 快照元信息（用于保留策略）。
+/// Snapshot metadata (used by the retention policy).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotMeta {
     pub kind: SnapshotKind,
@@ -148,9 +161,10 @@ pub struct SnapshotMeta {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetentionPolicy {
-    /// 滚动快照各保留份数。
+    /// Number of rolling snapshots to keep per kind.
     pub keep_rolling: usize,
-    /// 总字节上限（`None` = 不限制）。超限时优先裁剪最旧的滚动快照。
+    /// Total byte cap (`None` = unlimited). When exceeded, the oldest rolling snapshots are pruned
+    /// first.
     pub max_bytes: Option<u64>,
 }
 
@@ -164,11 +178,11 @@ impl Default for RetentionPolicy {
 }
 
 impl RetentionPolicy {
-    /// 返回需要删除的快照路径。**`initial` 永不裁剪。**
+    /// Return the snapshot paths that need to be deleted. **`initial` is never pruned.**
     pub fn plan_prune(&self, snapshots: &[SnapshotMeta]) -> Vec<String> {
         let mut doomed: Vec<String> = Vec::new();
 
-        // 1) 按 kind 分组，保留每类最新的 keep_rolling 份
+        // 1) Group by kind and keep the newest keep_rolling of each
         for kind in [SnapshotKind::PreStart, SnapshotKind::PreChange] {
             let mut group: Vec<&SnapshotMeta> =
                 snapshots.iter().filter(|s| s.kind == kind).collect();
@@ -182,7 +196,7 @@ impl RetentionPolicy {
             }
         }
 
-        // 2) 总量上限：继续从最旧的滚动快照开始裁
+        // 2) Total cap: keep pruning from the oldest rolling snapshots
         if let Some(max) = self.max_bytes {
             let mut remaining: Vec<&SnapshotMeta> = snapshots
                 .iter()
@@ -206,30 +220,30 @@ impl RetentionPolicy {
     }
 }
 
-/// 恢复范围。
+/// Restore scope.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreMode {
-    /// 默认：只还原 wifisync 改动过的键（用户其它配置保留）。
+    /// Default: restore only the keys wifisync changed (other user settings are kept).
     #[default]
     ManagedOnly,
-    /// 按基线整体覆盖（需要二次确认）。
+    /// Overwrite everything from the baseline (requires a second confirmation).
     Full,
 }
 
-/// 恢复动作。
+/// Restore action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum RestoreAction {
-    /// 用快照文件整体替换。
+    /// Replace the whole file with the snapshot version.
     ReplaceFile { file: String, from: String },
-    /// 把某个键还原为原值。
+    /// Restore a key to its original value.
     SetOption { key: String, value: String },
-    /// 删除由 wifisync 新增、原配置中不存在的键。
+    /// Delete a key added by wifisync that did not exist in the original configuration.
     DeleteOption { key: String },
-    /// 恢复后重载网络。
+    /// Reload the network after restoring.
     ReloadNetwork,
-    /// 恢复后重载无线。
+    /// Reload wireless after restoring.
     ReloadWifi,
 }
 
@@ -237,24 +251,28 @@ impl RestoreAction {
     pub fn describe(&self) -> String {
         match self {
             RestoreAction::ReplaceFile { file, from } => {
-                format!("用快照覆盖 /etc/config/{}（来自 {}）", file, from)
+                format!(
+                    "overwrite /etc/config/{} from the snapshot ({})",
+                    file, from
+                )
             }
             RestoreAction::SetOption { key, value } => format!("{} = {}", key, value),
-            RestoreAction::DeleteOption { key } => format!("删除 {}", key),
-            RestoreAction::ReloadNetwork => "重载网络（ubus call network reload）".to_string(),
-            RestoreAction::ReloadWifi => "重载无线（wifi reload）".to_string(),
+            RestoreAction::DeleteOption { key } => format!("delete {}", key),
+            RestoreAction::ReloadNetwork => "reload network (ubus call network reload)".to_string(),
+            RestoreAction::ReloadWifi => "reload wireless (wifi reload)".to_string(),
         }
     }
 }
 
-/// 单个受管键的对比输入。
+/// Comparison input for a single managed key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedEntry {
     /// `network.lan.ipaddr`
     pub key: String,
-    /// 快照里的原值（`None` = 原配置中不存在该键）
+    /// Original value in the snapshot (`None` = the key did not exist in the original
+    /// configuration)
     pub original: Option<String>,
-    /// 当前值
+    /// Current value
     pub current: Option<String>,
 }
 
@@ -262,9 +280,10 @@ pub struct ManagedEntry {
 pub struct RestorePlan {
     pub mode: RestoreMode,
     pub actions: Vec<RestoreAction>,
-    /// 明确跳过的项与原因（例如用户自己改过、但不在受管列表里的键）。
+    /// Explicitly skipped items and the reason (e.g. keys the user changed that are not in the
+    /// managed list).
     pub skipped: Vec<String>,
-    /// 非空表示拒绝执行。
+    /// Non-empty means execution is refused.
     pub blocked: Option<String>,
 }
 
@@ -275,23 +294,24 @@ impl RestorePlan {
 
     pub fn summary(&self) -> String {
         format!(
-            "{:?} 恢复计划：{} 个动作，跳过 {} 项{}",
+            "{:?} restore plan: {} action(s), {} skipped{}",
             self.mode,
             self.actions.len(),
             self.skipped.len(),
             self.blocked
                 .as_ref()
-                .map(|r| format!("，已阻止：{}", r))
+                .map(|r| format!(", blocked: {}", r))
                 .unwrap_or_default()
         )
     }
 }
 
-/// 生成恢复计划。
+/// Build a restore plan.
 ///
-/// * `mode = ManagedOnly`：只处理 `entries` 中「当前值 != 原值」的键；
-/// * `mode = Full`：整体覆盖 `manifest.files` 中的文件；
-/// * 任何情况下，校验失败都会 `blocked`（拒绝恢复，绝不删基线）。
+/// * `mode = ManagedOnly`: only handle `entries` whose current value differs from the original;
+/// * `mode = Full`: overwrite all files in `manifest.files`;
+/// * In any case, a failed verification becomes `blocked` (restore is refused; the baseline is
+///   never deleted).
 pub fn build_restore_plan(
     mode: RestoreMode,
     manifest: &BackupManifest,
@@ -305,7 +325,7 @@ pub fn build_restore_plan(
             actions: Vec::new(),
             skipped: Vec::new(),
             blocked: Some(format!(
-                "{}（基线目录 {}）",
+                "{} (baseline directory {})",
                 verification.summary(),
                 snapshot_dir
             )),
@@ -323,13 +343,15 @@ pub fn build_restore_plan(
                     from: snapshot_dir.to_string(),
                 });
             }
-            skipped.push("整体覆盖模式：用户在该文件中的所有改动都会被还原".to_string());
+            skipped.push(
+                "full overwrite mode: all user changes in those files are reverted".to_string(),
+            );
         }
         RestoreMode::ManagedOnly => {
             for entry in entries {
                 match (&entry.original, &entry.current) {
                     (Some(original), Some(current)) if original == current => {
-                        skipped.push(format!("{} 未变化", entry.key));
+                        skipped.push(format!("{} unchanged", entry.key));
                     }
                     (Some(original), _) => actions.push(RestoreAction::SetOption {
                         key: entry.key.clone(),
@@ -338,7 +360,7 @@ pub fn build_restore_plan(
                     (None, Some(_)) => actions.push(RestoreAction::DeleteOption {
                         key: entry.key.clone(),
                     }),
-                    (None, None) => skipped.push(format!("{} 不存在", entry.key)),
+                    (None, None) => skipped.push(format!("{} absent", entry.key)),
                 }
             }
         }
@@ -471,7 +493,7 @@ mod tests {
                 RestoreAction::ReloadNetwork
             ]
         );
-        assert_eq!(plan.skipped, vec!["network.lan.netmask 未变化"]);
+        assert_eq!(plan.skipped, vec!["network.lan.netmask unchanged"]);
     }
 
     #[test]
@@ -529,7 +551,7 @@ mod tests {
         let plan = build_restore_plan(RestoreMode::Full, &m, "/snap", &report, &[]);
         assert!(plan.is_blocked());
         assert!(plan.actions.is_empty());
-        assert!(plan.summary().contains("已阻止"));
+        assert!(plan.summary().contains("blocked"));
     }
 
     #[test]
@@ -542,7 +564,7 @@ mod tests {
             &VerifyReport::default(),
             &[],
         );
-        assert_eq!(plan.actions.len(), 3); // 2 文件 + ReloadNetwork
+        assert_eq!(plan.actions.len(), 3); // 2 files + ReloadNetwork
         assert!(matches!(plan.actions[0], RestoreAction::ReplaceFile { .. }));
     }
 }

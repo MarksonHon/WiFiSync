@@ -1,6 +1,6 @@
 [package]
 name = "wifisync-core"
-description = "WifiSync 纯逻辑核心：角色、建桥策略、Wi-Fi 信息源、网络档案、准入、备份与故障恢复状态机"
+description = "WifiSync pure-logic core: roles, bridge policy, Wi-Fi sources, network profile, admission, backup and failover state machine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

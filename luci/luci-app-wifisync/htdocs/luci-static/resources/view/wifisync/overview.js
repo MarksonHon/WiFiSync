@@ -4,6 +4,13 @@
 'require poll';
 'require view.wifisync.common as ws';
 
+// Role keys reported by the backend, mapped to translatable labels.
+var ROLE_LABELS = {
+	controller: _('Controller'),
+	ap: _('AP'),
+	gateway: _('Gateway')
+};
+
 return view.extend({
 	load: function() {
 		return Promise.all([ ws.callStatus(), ws.callVersion() ]);
@@ -11,13 +18,13 @@ return view.extend({
 
 	render: function(data) {
 		var status = data[0] || {}, version = data[1] || {};
-		var self = this;
 
-		var planText = E('pre', { 'class': 'cbi-input-textarea', 'style': 'white-space:pre-wrap' }, '（点击下方"预览改动"生成）');
+		var planText = E('pre', { 'class': 'cbi-input-textarea', 'style': 'white-space:pre-wrap' },
+			_('(click "Preview changes" below to generate)'));
 
 		function refreshPlan() {
 			return ws.callPlan().then(function(plan) {
-				planText.textContent = plan.text + '\n\n' + (plan.notes || []).join('\n');
+				planText.textContent = ws.planText(plan) || _('(no changes)');
 				return plan;
 			});
 		}
@@ -26,15 +33,15 @@ return view.extend({
 			return ws.callApply().then(function(result) {
 				ui.addNotification(null, planText, 'info');
 				planText.textContent = '';
-				alert(result.message || '已应用');
+				alert(ws.message(result.message) || _('Applied'));
 				return refreshPlan();
 			}).catch(function(err) {
-				alert(err.message || err);
+				alert(ws.errorText(err));
 			});
 		}
 
 		var roleChips = (status.role_labels || []).map(function(label) {
-			return ws.roleChip(label);
+			return ws.roleChip(ROLE_LABELS[label] || label);
 		});
 
 		var capabilities = status.capabilities || {};
@@ -46,65 +53,65 @@ return view.extend({
 			return ws.callStatus().then(function(next) {
 				var node = document.getElementById('wifisync-failsafe-state');
 				if (node && next.failsafe)
-					node.textContent = next.failsafe.state_label;
+					node.textContent = ws.message(next.failsafe.state_label);
 			});
 		}, 10);
 
 		return E('div', {}, [
-			ws.card('角色与职责', [
-				ws.kv('当前角色', E('div', {}, roleChips)),
-				ws.kv('是否自动建桥', status.bridge_enabled
-					? E('span', { 'class': 'label success' }, '允许（纯 AP 角色）')
-					: E('span', { 'class': 'label' }, status.bridge_blocked_reason || '不允许')),
-				ws.kv('设备 ID', E('code', {}, status.device_id || '-')),
-				ws.kv('同步模式', E('span', {}, status.sync_mode || 'auto')),
-				ws.kv('版本', E('span', {}, (version.version || '-') + ' (protocol ' + (version.protocol || 0) + ')'))
-			], 'Gateway / Controller 只读、只探测、只下发；只有「纯 AP」设备（有 AP 且无 Controller、无 Gateway）才会把所有网口并入 br-lan。'),
+			ws.card(_('Roles and duties'), [
+				ws.kv(_('Current roles'), E('div', {}, roleChips)),
+				ws.kv(_('Automatic bridging'), status.bridge_enabled
+					? E('span', { 'class': 'label success' }, _('Allowed (pure AP role)'))
+					: E('span', { 'class': 'label' }, ws.message(status.bridge_blocked_reason) || _('Not allowed'))),
+				ws.kv(_('Device ID'), E('code', {}, status.device_id || '-')),
+				ws.kv(_('Sync mode'), E('span', {}, status.sync_mode || 'auto')),
+				ws.kv(_('Version'), E('span', {}, (version.version || '-') + ' (protocol ' + (version.protocol || 0) + ')'))
+			], _('Gateway / Controller are read-only, probe-only and push-only; only a "pure AP" device (AP without Controller and Gateway) merges all ports into br-lan.')),
 
-			ws.card('硬件能力', [
-				ws.kv('设备型号', E('span', {}, capabilities.model || capabilities.board_name || '未知')),
-				ws.kv('无线 radio', E('span', {}, (capabilities.radios || []).map(function(r) { return r.name; }).join(', ') || '无')),
-				ws.kv('完整版 wpad（KVR）', ws.boolLabel(capabilities.wpad_full)),
-				ws.kv('VLAN 能力', ws.boolLabel(capabilities.vlan_capable)),
-				ws.kv('网口', E('span', {}, (capabilities.ports || []).map(function(p) {
+			ws.card(_('Hardware capabilities'), [
+				ws.kv(_('Device model'), E('span', {}, capabilities.model || capabilities.board_name || _('unknown'))),
+				ws.kv(_('Wireless radios'), E('span', {}, (capabilities.radios || []).map(function(r) { return r.name; }).join(', ') || _('none'))),
+				ws.kv(_('Full wpad (KVR)'), ws.boolLabel(capabilities.wpad_full)),
+				ws.kv(_('VLAN capable'), ws.boolLabel(capabilities.vlan_capable)),
+				ws.kv(_('Ports'), E('span', {}, (capabilities.ports || []).map(function(p) {
 					return p.name + '(' + p.kind + ')';
-				}).join(', ') || '无'))
+				}).join(', ') || _('none')))
 			]),
 
-			ws.card('故障恢复（可选）', [
-				ws.kv('状态', E('span', { 'id': 'wifisync-failsafe-state' }, failsafe.state_label || '-')),
-				ws.kv('适用性', ws.boolLabel(failsafe.applies)),
-				ws.kv('心跳目标', E('span', {}, (failsafe.config && failsafe.config.heartbeat_endpoint) || '未配置'))
-			], '该功能默认关闭。仅 AP 设备会在连不上 Controller/Gateway 时恢复设备默认网络。'),
+			ws.card(_('Failover (optional)'), [
+				ws.kv(_('State'), E('span', { 'id': 'wifisync-failsafe-state' }, ws.message(failsafe.state_label) || '-')),
+				ws.kv(_('Applicable'), ws.boolLabel(failsafe.applies)),
+				ws.kv(_('Heartbeat target'), E('span', {}, (failsafe.config && failsafe.config.heartbeat_endpoint) || _('not configured')))
+			], _('This feature is off by default. Only AP devices restore the default network when the Controller/Gateway becomes unreachable.')),
 
-			ws.card('准入与备份', [
-				ws.kv('待批准 AP', E('span', {}, String(admission.pending || 0))),
-				ws.kv('已批准', E('span', {}, String(admission.approved || 0))),
-				ws.kv('初始化基线', backup.initial_exists
-					? E('span', { 'class': 'label success' }, '已建立')
-					: E('span', { 'class': 'label warning' }, '未建立')),
-				ws.kv('上次退出是否异常', backup.dirty
-					? E('span', { 'class': 'label warning' }, backup.dirty_reason || '是')
+			ws.card(_('Admission and backup'), [
+				ws.kv(_('Pending APs'), E('span', {}, String(admission.pending || 0))),
+				ws.kv(_('Approved'), E('span', {}, String(admission.approved || 0))),
+				ws.kv(_('Initial baseline'), backup.initial_exists
+					? E('span', { 'class': 'label success' }, _('established'))
+					: E('span', { 'class': 'label warning' }, _('not established'))),
+				ws.kv(_('Dirty shutdown'), backup.dirty
+					? E('span', { 'class': 'label warning' }, ws.message(backup.dirty_reason) || _('Yes'))
 					: ws.boolLabel(false))
 			]),
 
-			ws.card('改动预览与应用', [
+			ws.card(_('Change preview and apply'), [
 				E('div', { 'class': 'cbi-value' }, [
-					ws.submit('预览改动（dry-run）', function() { refreshPlan(); }),
+					ws.submit(_('Preview changes (dry-run)'), function() { refreshPlan(); }),
 					' ',
-					ws.submit('应用改动', applyPlan),
+					ws.submit(_('Apply changes'), applyPlan),
 					' ',
-					ws.submit('确认应用成功', function() {
-						ws.callConfirm().then(function() { alert('已确认，apply-guard 已解除'); });
+					ws.submit(_('Confirm apply'), function() {
+						ws.callConfirm().then(function() { alert(_('Confirmed, apply-guard released')); });
 					}),
 					' ',
-					ws.submit('回滚最近一次写入', function() {
-						if (!confirm('确定回滚最近一次写入吗？')) return;
-						ws.callRevert().then(function(r) { alert(r.report || '已回滚'); });
+					ws.submit(_('Revert last write'), function() {
+						if (!confirm(_('Revert the most recent write?'))) return;
+						ws.callRevert().then(function(r) { alert(ws.message(r.report) || _('Reverted')); });
 					})
 				]),
 				planText
-			], '非 AP 角色下预览结果恒为「0 项改动」—— 这是"零侵入"的证明。')
+			], _('For non-AP roles the preview is always "0 changes" — the proof of the zero-intrusion design.'))
 		].filter(Boolean));
 	},
 

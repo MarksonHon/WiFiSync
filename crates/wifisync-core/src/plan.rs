@@ -1,20 +1,24 @@
-//! 写入计划（需求 5 / 7 / 8 / 9 的收口处）。
+//! Write plan (where requirements 5 / 7 / 8 / 9 converge).
 //!
-//! 整个程序**只通过这一份计划**去修改系统。因此只要证明：
+//! The whole program modifies the system **only through this single plan**. So it is enough to
+//! prove:
 //!
-//! * `roles.enable_bridge() == false` ⇒ 不产生网桥写入；
-//! * `roles.ap == false` ⇒ 不产生任何无线写入；
+//! * `roles.enable_bridge() == false` ⇒ no bridge writes are produced;
+//! * `roles.ap == false` ⇒ no wireless writes are produced;
 //!
-//! 就能证明「Gateway / Controller 零侵入」。这两条在单测里被穷举验证。
+//! and that proves "Gateway / Controller are zero-intrusion". Both are exhaustively verified in
+//! unit tests.
 
 use crate::bridge::{bridge_disabled_reason, plan_bridges, BridgePlan, BridgePlanInput};
 use crate::capability::Capabilities;
+use crate::message::Message;
 use crate::profile::NetworkProfile;
 use crate::role::Roles;
 use crate::wifi_source::ResolvedWifi;
 use serde::{Deserialize, Serialize};
 
-/// uci 写操作类型。删除是必须的：Baseline 中不存在的键在恢复时要删掉。
+/// uci write operation kind. Delete is required: keys absent from the Baseline must be removed on
+/// restore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UciOpKind {
@@ -29,11 +33,11 @@ pub enum UciOpKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UciOp {
     pub kind: UciOpKind,
-    /// uci 配置文件（不含路径与扩展名），如 `network` / `wireless`。
+    /// uci configuration file (without path and extension), e.g. `network` / `wireless`.
     pub file: String,
-    /// section 名或 `@type[-n]`。
+    /// Section name or `@type[-n]`.
     pub section: String,
-    /// `None` 表示整个 section。
+    /// `None` means the whole section.
     pub option: Option<String>,
     pub value: Option<String>,
 }
@@ -83,7 +87,7 @@ impl UciOp {
         }
     }
 
-    /// `network.lan.ipaddr` 形式的键（用于 `managed_keys` 与恢复）。
+    /// Key in `network.lan.ipaddr` form (used for `managed_keys` and restore).
     pub fn key(&self) -> String {
         match &self.option {
             Some(option) => format!("{}.{}.{}", self.file, self.section, option),
@@ -91,7 +95,7 @@ impl UciOp {
         }
     }
 
-    /// 用于 dry-run 展示的一行。
+    /// One line for dry-run display.
     pub fn describe(&self) -> String {
         match self.kind {
             UciOpKind::Set => format!(
@@ -118,22 +122,22 @@ impl UciOp {
     }
 }
 
-/// 一份完整的写入计划。
+/// A complete write plan.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WritePlan {
     pub ops: Vec<UciOp>,
     pub reload_network: bool,
     pub reload_wifi: bool,
-    /// 给用户看的说明与告警。
-    pub notes: Vec<String>,
-    /// 计划涉及的网桥（列表，支持多网桥）。
+    /// Explanations and warnings for the UI (translated by the front end).
+    pub notes: Vec<Message>,
+    /// Bridges involved in the plan (a list, supporting multiple bridges).
     pub bridges: Vec<BridgePlan>,
-    /// Wi-Fi 写入目标 radio（空 = 不写无线）。
+    /// Target radios for Wi-Fi writes (empty = no wireless writes).
     pub wifi_radios: Vec<String>,
 }
 
 impl WritePlan {
-    /// 唯一的「零侵入」判据。
+    /// The single "zero intrusion" criterion.
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
@@ -145,15 +149,12 @@ impl WritePlan {
         keys
     }
 
-    /// dry-run 文本（LuCI / CLI 直接展示）。
+    /// Language neutral dry-run text: only the uci commands and reload calls.
+    ///
+    /// Notes are delivered separately as [`Message`] values so the front end
+    /// can translate them.
     pub fn dry_run_text(&self) -> String {
-        if self.is_empty() {
-            return "本角色组合不会修改任何网络配置（0 项改动）".to_string();
-        }
         let mut out = String::new();
-        for note in &self.notes {
-            out.push_str(&format!("# {}\n", note));
-        }
         for op in &self.ops {
             out.push_str(&op.describe());
             out.push('\n');
@@ -169,10 +170,10 @@ impl WritePlan {
 
     pub fn summary(&self) -> String {
         if self.is_empty() {
-            return "无改动".to_string();
+            return "no changes".to_string();
         }
         format!(
-            "{} 项 uci 改动 / {} 个网桥 / {} 个 radio",
+            "{} uci change(s) / {} bridge(s) / {} radio(s)",
             self.ops.len(),
             self.bridges.len(),
             self.wifi_radios.len()
@@ -184,19 +185,19 @@ pub struct PlanInput<'a> {
     pub roles: Roles,
     pub caps: &'a Capabilities,
     pub bridge_name: &'a str,
-    /// 多网桥扩展点。
+    /// Multi-bridge extension point.
     pub extra_bridges: Vec<BridgePlan>,
-    /// 已解析的 Wi-Fi 信息（可能为 `None`）。
+    /// Resolved Wi-Fi information (may be `None`).
     pub wifi: Option<&'a ResolvedWifi>,
-    /// 可选档案（用于网桥/VLAN 的后续扩展，目前只读取 notes）。
+    /// Optional profile (for later bridge/VLAN extensions; only `notes` is read for now).
     pub profile: Option<&'a NetworkProfile>,
 }
 
-/// 生成写入计划 —— 全程序唯一的网络写入来源。
+/// Build the write plan — the program's only source of network writes.
 pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
     let mut plan = WritePlan::default();
 
-    // ── 1. 网桥：只有「纯 AP」才建桥（需求 5）──────────────────────────────
+    // ── 1. bridges: only a "pure AP" creates a bridge (requirement 5)──────────────────────────────
     let bridges = plan_bridges(&BridgePlanInput {
         roles: input.roles,
         caps: input.caps,
@@ -209,8 +210,9 @@ pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
         }
     } else {
         for bridge in &bridges {
-            plan.notes.push(format!("网桥规划：{}", bridge.summary()));
-            // `config device` 段：DSA/bridge 统一写法
+            plan.notes
+                .push(Message::new("plan.bridge_planned").param("bridge", bridge.summary()));
+            // `config device` section: the unified DSA/bridge form
             plan.ops
                 .push(UciOp::set("network", &bridge.name, "name", &bridge.name));
             plan.ops
@@ -257,21 +259,21 @@ pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
         plan.bridges = bridges;
     }
 
-    // ── 2. 无线：只有承担 AP 角色的设备才写（需求 7 / 8 / 9）───────────────
+    // ── 2. wireless: only devices with the AP role write (requirement 7 / 8 / 9)───────────────
     if input.roles.ap {
         if let Some(resolved) = input.wifi {
             let wifi = &resolved.profile;
             let radio = wifi.radio.clone();
             plan.notes.extend(resolved.notes.clone());
             if wifi.kvr.r || wifi.kvr.k || wifi.kvr.v {
-                plan.notes.push(format!(
-                    "KVR: k={} v={} r={} mobility_domain={} ft_over_ds={}",
-                    wifi.kvr.k,
-                    wifi.kvr.v,
-                    wifi.kvr.r,
-                    wifi.kvr.mobility_domain,
-                    wifi.kvr.ft_over_ds
-                ));
+                plan.notes.push(
+                    Message::new("plan.kvr")
+                        .flag("k", wifi.kvr.k)
+                        .flag("v", wifi.kvr.v)
+                        .flag("r", wifi.kvr.r)
+                        .param("mobility_domain", wifi.kvr.mobility_domain.clone())
+                        .flag("ft_over_ds", wifi.kvr.ft_over_ds),
+                );
             }
             let wifi_section = format!("wifisync_{}", radio);
             plan.ops
@@ -340,15 +342,13 @@ pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
             plan.reload_wifi = true;
         }
     } else if input.wifi.is_some() {
-        plan.notes.push(
-            "本设备不承担 AP 角色，Wi-Fi 信息仅用于下发给 AP，不修改本机无线配置".to_string(),
-        );
+        plan.notes.push(Message::new("plan.wifi_not_applied"));
     }
 
     if let Some(profile) = input.profile {
         if !profile.is_empty() {
             plan.notes
-                .push(format!("参考下发档案 {}", profile.summary()));
+                .push(Message::new("plan.profile_referenced").param("profile", profile.summary()));
         }
     }
 
@@ -442,8 +442,8 @@ mod tests {
         assert_eq!(plan.bridges[0].ports, vec!["lan1", "wan"]);
     }
 
-    /// 核心不变量：Gateway / Controller（无论是否带 AP）都不会单独写网桥，
-    /// 且完全不承担 AP 的配置连无线都不写。
+    /// Core invariant: Gateway / Controller (with or without AP) never writes a bridge on its own,
+    /// and a configuration without the AP role writes not even wireless.
     #[test]
     fn gateway_and_controller_are_non_invasive() {
         let caps = caps();
@@ -459,20 +459,29 @@ mod tests {
             if !roles.ap {
                 assert!(
                     plan.is_empty(),
-                    "不承担 AP 的角色组合必须零写入，roles={:?} plan={:?}",
+                    "non-AP role combinations must be zero-write, roles={:?} plan={:?}",
                     roles,
                     plan
                 );
             } else if !roles.enable_bridge() {
-                // 带 AP 但不能建桥（如 controller+ap）：允许写无线，但不得写网桥
-                assert!(!plan.reload_network, "roles={:?} 不应重载网络", roles);
-                assert!(plan.bridges.is_empty(), "roles={:?} 不应有网桥", roles);
+                // AP present but no bridge allowed (e.g. controller+ap): wireless writes are fine,
+                // but bridge writes are not
+                assert!(
+                    !plan.reload_network,
+                    "roles={:?} must not reload the network",
+                    roles
+                );
+                assert!(
+                    plan.bridges.is_empty(),
+                    "roles={:?} must not have bridges",
+                    roles
+                );
                 assert!(
                     !plan
                         .ops
                         .iter()
                         .any(|op| op.file == "network" && op.option.as_deref() == Some("ports")),
-                    "roles={:?} 不应写网桥端口",
+                    "roles={:?} must not write bridge ports",
                     roles
                 );
             }
@@ -504,7 +513,7 @@ mod tests {
             None,
         ));
         assert!(plan.is_empty());
-        assert!(plan.dry_run_text().contains("0 项改动"));
+        assert!(plan.dry_run_text().is_empty());
     }
 
     #[test]
@@ -514,6 +523,6 @@ mod tests {
         let plan = build_write_plan(&input(Roles::controller_only(), &caps, Some(&wifi)));
         assert!(plan.is_empty());
         assert!(plan.wifi_radios.is_empty());
-        assert!(plan.notes.iter().any(|n| n.contains("不修改本机无线配置")));
+        assert!(plan.notes.iter().any(|n| n.key == "plan.wifi_not_applied"));
     }
 }

@@ -1,9 +1,9 @@
-//! 外部命令执行封装。
+//! External command execution wrapper.
 //!
-//! 刻意选择「调用 OpenWrt 原生工具」而不是自己在 Rust 里重新实现：
-//! * uci 的写入语义（`commit`、section 创建）由 `uci` 保证；
-//! * 网桥落地交给 netifd（`ubus call network reload`），不直接操作 netlink；
-//! * 读取状态走 sysfs，不依赖 `ip -j`（busybox 的 ip 不支持 JSON）。
+//! We deliberately "call native OpenWrt tools" instead of reimplementing them in Rust:
+//! * uci write semantics (`commit`, section creation) are guaranteed by `uci`;
+//! * bridge bring-up is delegated to netifd (`ubus call network reload`), not netlink;
+//! * status reads go through sysfs, without relying on `ip -j` (busybox's ip has no JSON).
 
 use crate::error::{SysError, SysResult};
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ impl CmdOutput {
     }
 }
 
-/// 在 PATH 中查找可执行文件。
+/// Look up an executable in PATH.
 pub fn which(program: &str) -> Option<PathBuf> {
     if program.contains('/') {
         let path = PathBuf::from(program);
@@ -42,7 +42,7 @@ pub fn which(program: &str) -> Option<PathBuf> {
     None
 }
 
-/// 运行命令，允许非零退出码（返回结果）。
+/// Run a command, allowing a non-zero exit code (the result is returned).
 pub fn run(program: &str, args: &[&str]) -> SysResult<CmdOutput> {
     let output = Command::new(program)
         .args(args)
@@ -62,14 +62,14 @@ pub fn run(program: &str, args: &[&str]) -> SysResult<CmdOutput> {
     })
 }
 
-/// 运行命令并要求成功。
+/// Run a command and require success.
 pub fn run_ok(program: &str, args: &[&str]) -> SysResult<CmdOutput> {
     let output = run(program, args)?;
     if !output.success() {
         return Err(SysError::Command {
             program: program.to_string(),
             message: format!(
-                "退出码 {} / stderr: {}",
+                "exit code {} / stderr: {}",
                 output.status,
                 output.stderr.trim()
             ),
@@ -78,7 +78,7 @@ pub fn run_ok(program: &str, args: &[&str]) -> SysResult<CmdOutput> {
     Ok(output)
 }
 
-/// 命令是否存在（用于能力探测与降级）。
+/// Whether a command exists (used for capability probing and degradation).
 pub fn has(program: &str) -> bool {
     which(program).is_some()
 }

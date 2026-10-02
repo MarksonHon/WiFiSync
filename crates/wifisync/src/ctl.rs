@@ -1,7 +1,7 @@
-//! 命令行界面。
+//! Command line interface.
 //!
-//! 设计要点：**离线也能干活**。如果守护进程在跑，命令走 UNIX socket；
-//! 否则就地构造一个 [`Daemon`] 实例直接执行（备份/恢复/计划这类操作本来就不需要常驻）。
+//! Design: **it must work offline**. If the daemon runs, commands use the UNIX socket;
+//! otherwise build a [`Daemon`] in place and run it directly (backup/restore/plan need no daemon).
 
 use crate::daemon::{Daemon, DaemonOptions};
 use crate::rpc;
@@ -9,14 +9,14 @@ use serde_json::{json, Value};
 use wifisync_sys::error::SysResult;
 use wifisync_sys::Paths;
 
-/// 简化：把 (方法, 参数) 转发给运行中的服务，或本地一次性执行。
+/// Convenience: forward (method, params) to the running service, or run once locally.
 pub fn invoke(paths: &Paths, method: &str, params: Value) -> Result<Value, String> {
     let socket = paths.socket_file();
     if rpc::is_running(&socket) {
         return rpc::call(&socket, method, params);
     }
     let daemon = Daemon::new(paths.clone(), DaemonOptions::default())
-        .map_err(|e| format!("初始化失败：{}", e))?;
+        .map_err(|e| format!("initialization failed: {}", e))?;
     daemon.handle(method, &params)
 }
 
@@ -57,7 +57,7 @@ pub fn backup(paths: &Paths, action: &str) -> Result<Value, String> {
         "verify" => invoke(paths, "backup.verify", json!({})),
         "prune" => invoke(paths, "backup.prune", json!({})),
         "create" | "" => invoke(paths, "backup.create", json!({ "kind": "pre-start" })),
-        other => Err(format!("未知的 backup 子命令 `{}`", other)),
+        other => Err(format!("unknown backup subcommand `{}`", other)),
     }
 }
 
@@ -65,14 +65,14 @@ pub fn admit(paths: &Paths, action: &str, device_id: Option<&str>) -> Result<Val
     match action {
         "list" => invoke(paths, "admission.list", json!({})),
         "approve" | "reject" | "revoke" => {
-            let id = device_id.ok_or_else(|| "缺少 device_id".to_string())?;
+            let id = device_id.ok_or_else(|| "missing device_id".to_string())?;
             invoke(
                 paths,
                 &format!("admission.{}", action),
                 json!({ "device_id": id }),
             )
         }
-        other => Err(format!("未知的 admit 子命令 `{}`", other)),
+        other => Err(format!("unknown admit subcommand `{}`", other)),
     }
 }
 
@@ -87,7 +87,7 @@ pub fn probe(paths: &Paths, target: &str) -> Result<Value, String> {
     invoke(paths, "probe.connectivity", json!({ "target": target }))
 }
 
-/// 打印 JSON（供 shell / LuCI 使用）。
+/// Print JSON (for the shell / LuCI).
 pub fn print_json(value: &Value) {
     match serde_json::to_string_pretty(value) {
         Ok(text) => println!("{}", text),
@@ -95,7 +95,7 @@ pub fn print_json(value: &Value) {
     }
 }
 
-/// 初始化路径（`WIFISYNC_ROOT` 可覆盖，便于测试与离线演练）。
+/// Initialize the paths (`WIFISYNC_ROOT` can override them, for tests and offline drills).
 pub fn default_paths() -> SysResult<Paths> {
     Ok(Paths::new())
 }

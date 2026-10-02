@@ -1,7 +1,7 @@
 name: Release
 
-# 打 tag（如 v0.1.0）时：为 OpenWrt 25.12 的全部 x86 / ARM64 架构交叉编译，
-# 并把二进制挂到 GitHub Release 上（附带构建信息与校验和）。
+# On tag push (e.g. v0.1.0): cross-compile for all x86 / ARM64 architectures of OpenWrt 25.12,
+# and attach the binaries to a GitHub Release (with build info and checksums).
 
 on:
   push:
@@ -33,17 +33,17 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y zstd file
 
-      - name: 交叉编译
+      - name: Cross-compile
         run: |
           set -eu
           TRIPLE=$(scripts/openwrt-arch.sh ${{ matrix.arch }} triple)
           rustup target add "$TRIPLE"
           scripts/build-musl.sh ${{ matrix.arch }}
 
-      - name: 生成校验和
+      - name: Generate checksums
         run: |
           set -eu
           cd "dist/${{ matrix.arch }}"
@@ -65,7 +65,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: 整理发布目录
+      - name: Prepare the release directory
         run: |
           set -eu
           mkdir -p release
@@ -75,7 +75,7 @@ jobs:
             cp "$dir/build-info.json" "release/build-info-${arch}.json" 2>/dev/null || true
             cp "$dir/sha256sum.txt" "release/sha256sum-${arch}.txt" 2>/dev/null || true
           done
-          # 汇总校验和（改名成带架构的文件名）
+          # Aggregate checksums (renamed to include the architecture)
           ( cd release && for f in wifisync-*; do
               case "$f" in *.txt|*.json) continue ;; esac
               sha256sum "$f"
@@ -93,9 +93,9 @@ jobs:
           body: |
             ## WifiSync ${{ github.ref_name }}
 
-            支持 OpenWrt 25.12 的全部 x86 / ARM64 包架构（用官方 SDK 工具链编译）：
+            Supports all x86 / ARM64 package architectures of OpenWrt 25.12 (built with the official SDK toolchain):
 
-            | 包架构 | SDK target | Rust target |
+            | Package arch | SDK target | Rust target |
             |--------|-----------|-------------|
             | x86_64 | x86/64 | x86_64-unknown-linux-musl |
             | i386_pentium4 | x86/generic | i686-unknown-linux-musl |
@@ -105,14 +105,14 @@ jobs:
             | aarch64_cortex-a72 | bcm27xx/bcm2711 | aarch64-unknown-linux-musl |
             | aarch64_cortex-a76 | bcm27xx/bcm2712 | aarch64-unknown-linux-musl |
 
-            需要 .apk 安装包的请从 `OpenWrt packages` 工作流（手动触发）获取；
-            或者直接把仓库作为 feed 加入 OpenWrt 构建树后 `make package/wifisync/compile`。
+            For .apk installers, use the `OpenWrt packages` workflow (manually triggered);
+            or add this repository as a feed in an OpenWrt build tree and run `make package/wifisync/compile`.
 
-            ### 安装（手动放置二进制）
+            ### Install (place the binary manually)
 
             ```sh
-            # 在路由器上
-            opkg remove --force-depends wpad-basic-mbedtls  # 可选：换成完整版 wpad 以获得 KVR
+            # On the router
+            opkg remove --force-depends wpad-basic-mbedtls  # optional: switch to the full wpad to get KVR
             opkg install wpad-mbedtls
             cp wifisync-<arch> /usr/bin/wifisync && chmod +x /usr/bin/wifisync
             ```

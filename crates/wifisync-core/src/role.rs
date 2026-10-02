@@ -1,17 +1,19 @@
-//! 角色模型（需求 3 / 5 / 7 / 8）。
+//! Role model (requirement 3 / 5 / 7 / 8).
 //!
-//! 三种角色是**能力集合**，一台设备可以同时承担多个：
+//! The three roles are **capability sets**, and one device can take on several at once:
 //!
-//! | 角色 | 默认 | 对本机网络的改动 |
-//! |------|------|-----------------|
-//! | `gateway` | 有无线时默认开 | **无**（只让用户选 LAN 接口用于识别/探测） |
-//! | `controller` | 有无线时默认开 | **无**（只做新 AP 准入 + 网络信息下发） |
-//! | `ap` | 有无线时默认开；**无无线强制关闭** | 应用下发的 Wi-Fi / 网桥信息 |
+//! | Role | Default | Changes to the local network |
+//! |------|---------|------------------------------|
+//! | `gateway` | on by default with wireless | **none** (only lets the user pick LAN interfaces for identification/probing) |
+//! | `controller` | on by default with wireless | **none** (only new AP admission + information push) |
+//! | `ap` | on by default with wireless; **forced off without wireless** | applies the pushed Wi-Fi / bridge information |
 //!
-//! 只有「纯 AP」（有 ap 且没有 gateway 也没有 controller）才自动把所有网口组成 `br-lan`。
+//! Only a "pure AP" (ap set, and neither gateway nor controller) automatically merges all network
+//! ports into `br-lan`.
 
 use crate::capability::Capabilities;
 use crate::error::{CoreError, CoreResult};
+use crate::message::Message;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21,7 +23,8 @@ pub struct Roles {
     pub gateway: bool,
 }
 
-/// 角色被自动调整的原因，供 UI 展示（需求 3：无无线时取消默认 AP 并禁用）。
+/// Reason a role was adjusted automatically, for the UI (requirement 3: drop the default AP role
+/// and disable it when there is no wireless).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoleAdjustment {
@@ -29,9 +32,10 @@ pub enum RoleAdjustment {
 }
 
 impl RoleAdjustment {
-    pub fn message(&self) -> &'static str {
+    /// UI message for this adjustment.
+    pub fn message(&self) -> Message {
         match self {
-            RoleAdjustment::ApRemovedNoWifi => "本设备没有无线模块，已取消 AP 角色并禁用该选项",
+            RoleAdjustment::ApRemovedNoWifi => Message::new("role.ap_removed_no_wifi"),
         }
     }
 }
@@ -57,7 +61,8 @@ impl Roles {
         }
     }
 
-    /// 需求 3 的默认值：有无线 ⇒ 三种角色全开；无无线 ⇒ 只有 controller + gateway。
+    /// Requirement 3 defaults: with wireless ⇒ all three roles on; without wireless ⇒ only
+    /// controller + gateway.
     pub fn default_for(caps: &Capabilities) -> Self {
         Self {
             controller: true,
@@ -77,17 +82,18 @@ impl Roles {
             .count()
     }
 
-    /// 是否允许「把所有网口组成一个网桥」。整份代码里唯一允许建桥的入口。
+    /// Whether "merge all network ports into one bridge" is allowed. The only entry point in the
+    /// whole codebase that permits creating a bridge.
     pub fn enable_bridge(&self) -> bool {
         self.ap && !self.gateway && !self.controller
     }
 
-    /// 是否承担 Gateway：Gateway 一律不动用户网络。
+    /// Whether this device takes the Gateway role: a Gateway never touches the user's network.
     pub fn is_gateway(&self) -> bool {
         self.gateway
     }
 
-    /// 是否承担 Controller。
+    /// Whether this device takes the Controller role.
     pub fn is_controller(&self) -> bool {
         self.controller
     }
@@ -106,7 +112,7 @@ impl Roles {
         out
     }
 
-    /// 去掉硬件不支持的角色；返回被调整的项，供 UI 提示。
+    /// Remove roles the hardware does not support; returns the adjustments for the UI to show.
     pub fn sanitize(&mut self, caps: &Capabilities) -> Vec<RoleAdjustment> {
         let mut adjustments = Vec::new();
         if self.ap && !caps.has_wifi() {
@@ -116,7 +122,7 @@ impl Roles {
         adjustments
     }
 
-    /// 校验能否设置：AP 需要无线硬件。
+    /// Validate whether the roles can be set: AP requires wireless hardware.
     pub fn validate(&self, caps: &Capabilities) -> CoreResult<()> {
         if self.ap && !caps.has_wifi() {
             return Err(CoreError::ApRequiresWifi);
@@ -124,7 +130,7 @@ impl Roles {
         Ok(())
     }
 
-    /// uci 存储形式，如 `"controller ap gateway"`。
+    /// uci storage form, e.g. `"controller ap gateway"`.
     pub fn to_uci_value(&self) -> String {
         self.labels().join(" ")
     }
@@ -175,7 +181,10 @@ mod tests {
     fn default_roles_without_wifi_drop_ap() {
         let roles = Roles::default_for(&Capabilities::default());
         assert!(roles.controller && roles.gateway);
-        assert!(!roles.ap, "无无线设备默认不得承担 AP");
+        assert!(
+            !roles.ap,
+            "a device without wireless must not default to AP"
+        );
     }
 
     #[test]
@@ -192,7 +201,7 @@ mod tests {
 
     #[test]
     fn only_ap_role_enables_bridge() {
-        // 穷举 2^3 组合，只有 {ap} 允许建桥（R5）
+        // Enumerate all 2^3 combinations; only {ap} may create a bridge (R5)
         for bits in 0u8..8 {
             let roles = Roles {
                 controller: bits & 0b001 != 0,

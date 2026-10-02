@@ -31,7 +31,7 @@ return view.extend({
 			var items = backups.snapshots || [];
 			if (!items.length) {
 				tableBody.appendChild(E('tr', {}, [
-					E('td', { 'colspan': 5, 'style': 'text-align:center' }, '暂无快照')
+					E('td', { 'colspan': 5, 'style': 'text-align:center' }, _('No snapshots'))
 				]));
 				return;
 			}
@@ -43,10 +43,10 @@ return view.extend({
 					E('td', {}, Math.round((snapshot.bytes || 0) / 1024) + ' KiB'),
 					E('td', {}, snapshot.path),
 					E('td', {}, [
-						ws.submit('校验', function() {
+						ws.submit(_('Verify'), function() {
 							ws.callBackupVerify(snapshot.path).then(function(report) {
 								verifyResult.innerHTML = '';
-								verifyResult.appendChild(ws.notice(report.summary, report.ok ? 'success' : 'error'));
+								verifyResult.appendChild(ws.notice(ws.message(report.summary), report.ok ? 'success' : 'error'));
 							});
 						})
 					])
@@ -57,26 +57,26 @@ return view.extend({
 
 		function doRestore(mode) {
 			var hint = mode === 'full'
-				? '将按基线整体覆盖 network/wireless/dhcp/firewall/system，用户在这些文件里的改动都会丢失。确定继续？'
-				: '只会还原 WifiSync 改动过的键，其它配置保持不变。确定继续？';
+				? _('network/wireless/dhcp/firewall/system will be overwritten from the baseline as a whole; user changes in these files will be lost. Continue?')
+				: _('Only the keys changed by WifiSync are restored, all other configuration is preserved. Continue?');
 			if (!confirm(hint)) return;
 			ws.callRestore(mode, 'initial').then(function(result) {
-				notify('恢复完成：' + (result.report || '') + '（' + mode + '）');
+				notify(_('Restore finished') + ': ' + ws.message(result.report) + ' (' + mode + ')');
 				return refresh();
 			}).catch(function(err) {
-				notify(String(err.message || err), 'error');
+				notify(ws.errorText(err), 'error');
 			});
 		}
 
-		// 故障恢复表单
+		// Failover form
 		var enabled = E('input', { 'type': 'checkbox', 'checked': (failsafe.config && failsafe.config.enabled) ? '' : null });
 		var timeout = E('input', { 'type': 'text', 'class': 'cbi-input-text',
 			'value': String((failsafe.config && failsafe.config.link_timeout_secs) || 300) });
 		var confirmSecs = E('input', { 'type': 'text', 'class': 'cbi-input-text',
 			'value': String((failsafe.config && failsafe.config.apply_confirm_secs) || 90) });
 		var action = E('select', { 'class': 'cbi-input-select' }, [
-			E('option', { 'value': 'revert', 'selected': ((failsafe.config && failsafe.config.action) === 'revert') ? '' : null }, '恢复默认网络'),
-			E('option', { 'value': 'reboot', 'selected': ((failsafe.config && failsafe.config.action) === 'reboot') ? '' : null }, '恢复后重启')
+			E('option', { 'value': 'revert', 'selected': ((failsafe.config && failsafe.config.action) === 'revert') ? '' : null }, _('Restore the default network')),
+			E('option', { 'value': 'reboot', 'selected': ((failsafe.config && failsafe.config.action) === 'reboot') ? '' : null }, _('Restore and reboot'))
 		]);
 		var heartbeat = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:20em',
 			'value': (failsafe.config && failsafe.config.heartbeat_endpoint) || '' });
@@ -90,41 +90,41 @@ return view.extend({
 				false,
 				heartbeat.value.trim()
 			).then(function() {
-				notify('故障恢复设置已保存');
+				notify(_('Failover settings saved'));
 			}).catch(function(err) {
-				notify(String(err.message || err), 'error');
+				notify(ws.errorText(err), 'error');
 			});
 		}
 
 		return E('div', {}, [
-			ws.notice('纪律：服务启动前自动保存初始化网络基线，服务停止前自动恢复原有网络。' +
-				'恢复默认范围是 managed_only（只还原 WifiSync 改过的键）。', 'info'),
+			ws.notice(_('Discipline: the initial network baseline is saved before the service starts and the previous network is restored before it stops.') +
+				_('The default restore scope is managed_only (only the keys changed by WifiSync are restored).'), 'info'),
 
-			ws.card('初始化基线', [
-				ws.kv('基线状态', backups.initial_exists
-					? E('span', { 'class': 'label success' }, '已建立')
-					: E('span', { 'class': 'label warning' }, '未建立（首次启动服务时创建）')),
-				ws.kv('基线路径', E('code', {}, backups.initial_dir || '-')),
-				ws.kv('上次退出', (status.backup && status.backup.dirty)
-					? E('span', { 'class': 'label warning' }, status.backup.dirty_reason || '异常')
-					: E('span', { 'class': 'label success' }, '正常')),
+			ws.card(_('Initial baseline'), [
+				ws.kv(_('Baseline state'), backups.initial_exists
+					? E('span', { 'class': 'label success' }, _('established'))
+					: E('span', { 'class': 'label warning' }, _('not established (created on the first service start)'))),
+				ws.kv(_('Baseline path'), E('code', {}, backups.initial_dir || '-')),
+				ws.kv(_('Last shutdown'), (status.backup && status.backup.dirty)
+					? E('span', { 'class': 'label warning' }, ws.message(status.backup.dirty_reason) || _('abnormal'))
+					: E('span', { 'class': 'label success' }, _('normal'))),
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' }, [
-						ws.submit('校验基线完整性', function() {
+						ws.submit(_('Verify baseline integrity'), function() {
 							ws.callBackupVerify('').then(function(report) {
 								verifyResult.innerHTML = '';
-								verifyResult.appendChild(ws.notice(report.summary, report.ok ? 'success' : 'error'));
+								verifyResult.appendChild(ws.notice(ws.message(report.summary), report.ok ? 'success' : 'error'));
 							});
 						}), ' ',
-						ws.submit('立即创建快照', function() {
+						ws.submit(_('Create snapshot now'), function() {
 							ws.callBackupCreate('pre-change').then(function() {
-								notify('快照已创建');
+								notify(_('Snapshot created'));
 								return refresh();
 							});
 						}), ' ',
-						ws.submit('清理旧快照', function() {
+						ws.submit(_('Prune old snapshots'), function() {
 							ws.callBackupPrune().then(function(result) {
-								notify('已清理 ' + ((result.removed || []).length) + ' 份旧快照（基线永不清理）');
+								notify(_('Pruned old snapshots') + ': ' + ((result.removed || []).length) + ' ' + _('(the baseline is never pruned)'));
 								return refresh();
 							});
 						})
@@ -133,36 +133,36 @@ return view.extend({
 				verifyResult,
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' }, [
-						ws.submit('恢复基线（managed_only）', function() { doRestore('managed_only'); }), ' ',
-						ws.submit('恢复基线（full）', function() { doRestore('full'); })
+						ws.submit(_('Restore baseline (managed_only)'), function() { doRestore('managed_only'); }), ' ',
+						ws.submit(_('Restore baseline (full)'), function() { doRestore('full'); })
 					])
 				]),
 				message
-			], '恢复前会先校验 sha256；校验不通过会直接拒绝执行，且永远不会删除基线。'),
+			], _('The sha256 checksum is verified before restoring; a failed check rejects the restore and the baseline is never deleted.')),
 
-			ws.card('快照列表', [
+			ws.card(_('Snapshot list'), [
 				E('table', { 'class': 'table' }, [
 					E('thead', {}, E('tr', {}, [
-						E('th', {}, '类型'), E('th', {}, '时间'), E('th', {}, '大小'),
-						E('th', {}, '路径'), E('th', {}, '操作')
+						E('th', {}, _('Kind')), E('th', {}, _('Time')), E('th', {}, _('Size')),
+						E('th', {}, _('Path')), E('th', {}, _('Actions'))
 					])),
 					tableBody
 				])
 			]),
 
-			ws.card('故障恢复（可选，默认关闭）', [
+			ws.card(_('Failover (optional, off by default)'), [
 				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, E('span', {}, [ enabled, ' 启用' ])),
+					E('label', { 'class': 'cbi-value-title' }, E('span', {}, [ enabled, ' ', _('Enable') ])),
 					E('div', { 'class': 'cbi-value-field' },
-						'仅 AP 设备生效：连不上 Controller/Gateway 超过设定时间后恢复设备默认网络。' +
-						'Gateway / Controller 不会触发这类回滚（零侵入原则）。')
+						_('Only effective on AP devices: the default network is restored after the Controller/Gateway has been unreachable for the configured time.') +
+						_('Gateway / Controller never trigger such a rollback (zero-intrusion principle).'))
 				]),
-				ws.kv('心跳丢失超时（秒）', timeout),
-				ws.kv('应用确认窗口（秒）', confirmSecs),
-				ws.kv('触发动作', action),
-				ws.kv('心跳目标（Controller/Gateway）', heartbeat),
+				ws.kv(_('Heartbeat loss timeout (seconds)'), timeout),
+				ws.kv(_('Apply confirmation window (seconds)'), confirmSecs),
+				ws.kv(_('Trigger action'), action),
+				ws.kv(_('Heartbeat target (Controller/Gateway)'), heartbeat),
 				E('div', { 'class': 'cbi-value' }, [
-					E('div', { 'class': 'cbi-value-field' }, [ ws.submit('保存故障恢复设置', saveFailsafe) ])
+					E('div', { 'class': 'cbi-value-field' }, [ ws.submit(_('Save failover settings'), saveFailsafe) ])
 				])
 			])
 		]);

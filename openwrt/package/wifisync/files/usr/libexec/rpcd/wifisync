@@ -1,10 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# rpcd exec 插件桥：把 wifisync 的本地 UNIX socket 接口暴露为 ubus 对象 `wifisync`。
+# rpcd exec plugin bridge: exposes the wifisync local UNIX socket interface as the ubus object `wifisync`.
 #
-# rpcd 的调用约定：
-#   /usr/libexec/rpcd/wifisync list            → 打印方法表 JSON
-#   /usr/libexec/rpcd/wifisync call <method>   → 从 stdin 读参数，向 stdout 打印结果
+# rpcd calling convention:
+#   /usr/libexec/rpcd/wifisync list            → print the method table JSON
+#   /usr/libexec/rpcd/wifisync call <method>   → read arguments from stdin, print the result to stdout
 
 exec /usr/bin/wifisync ubus "$@"

@@ -11,18 +11,18 @@ return view.extend({
 	render: function(data) {
 		var logs = data[0] || {}, plan = data[1] || {}, status = data[2] || {}, version = data[3] || {};
 		var logBox = E('pre', { 'style': 'white-space:pre-wrap; max-height:24em; overflow:auto' },
-			(logs.lines || []).join('\n') || '（暂无日志：服务的 stderr 由 procd 收集，可用 logread 查看）');
+			(logs.lines || []).join('\n') || _('(no logs yet: the stderr of the service is collected by procd, use logread to inspect it)'));
 
 		function refreshLogs() {
 			return ws.callLogs(200).then(function(next) {
-				logBox.textContent = (next.lines || []).join('\n') || '（暂无日志）';
+				logBox.textContent = (next.lines || []).join('\n') || _('(no logs yet)');
 			});
 		}
 
 		function copy(el) {
 			if (navigator.clipboard) {
 				navigator.clipboard.writeText(el.textContent);
-				ui.addNotification(null, E('p', {}, '已复制到剪贴板'), 'info');
+				ui.addNotification(null, E('p', {}, _('Copied to clipboard')), 'info');
 			}
 		}
 
@@ -35,33 +35,33 @@ return view.extend({
 		var diagBox = E('pre', { 'style': 'white-space:pre-wrap; max-height:24em; overflow:auto' }, diagnostics);
 
 		return E('div', {}, [
-			ws.card('自检信息（可直接贴到 issue）', [
+			ws.card(_('Self-check information (can be pasted into an issue)'), [
 				diagBox,
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' }, [
-						ws.submit('复制', function() { copy(diagBox); })
+						ws.submit(_('Copy'), function() { copy(diagBox); })
 					])
 				])
 			]),
 
-			ws.card('写入计划（dry-run 全量）', [
-				E('pre', { 'style': 'white-space:pre-wrap' }, plan.text || '（无）'),
+			ws.card(_('Write plan (full dry-run)'), [
+				E('pre', { 'style': 'white-space:pre-wrap' }, ws.planText(plan) || _('(none)')),
 				E('div', { 'class': 'cbi-section-descr' },
-					'非 AP 角色时此处恒为「0 项改动」，这是零侵入设计的直接证据。')
+					_('For non-AP roles this is always "0 changes", which is direct evidence of the zero-intrusion design.'))
 			]),
 
-			ws.card('服务日志', [
+			ws.card(_('Service log'), [
 				logBox,
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' }, [
-						ws.submit('刷新日志', refreshLogs),
+						ws.submit(_('Refresh log'), refreshLogs),
 						' ',
-						ws.submit('复制日志', function() { copy(logBox); })
+						ws.submit(_('Copy log'), function() { copy(logBox); })
 					])
 				])
-			], '服务日志同时写入 syslog，可用 `logread -e wifisync` 查看。'),
+			], _('The service log is also written to syslog and can be inspected with `logread -e wifisync`.')),
 
-			ws.card('常用诊断命令', [
+			ws.card(_('Common diagnostic commands'), [
 				E('pre', { 'style': 'white-space:pre-wrap' },
 					'/usr/bin/wifisync status\n' +
 					'/usr/bin/wifisync plan\n' +

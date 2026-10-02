@@ -1,8 +1,9 @@
-//! 设备能力探测的**数据模型**（探测动作在 `wifisync-sys`，判断逻辑在这里）。
+//! **Data model** for device capability probing (the probing itself lives in `wifisync-sys`;
+//! the decision logic lives here).
 
 use serde::{Deserialize, Serialize};
 
-/// 物理网口在出厂拓扑里的角色。
+/// Role of a physical port in the factory topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PortKind {
@@ -23,40 +24,41 @@ impl PortKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortInfo {
-    /// 内核接口名，如 `lan1` / `eth0` / `wan`。
+    /// Kernel interface name, e.g. `lan1` / `eth0` / `wan`.
     pub name: String,
     pub kind: PortKind,
-    /// DSA 用户端口（DSA 拓扑下加桥是标准做法）。
+    /// DSA user port (adding a bridge is standard practice under a DSA topology).
     pub dsa: bool,
-    /// 当前是否有载波（只用于展示，不影响规划）。
+    /// Whether there is currently a carrier (display only; does not affect planning).
     pub carrier: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RadioInfo {
-    /// uci 里的 radio 名，如 `radio0`。
+    /// Radio name in uci, e.g. `radio0`.
     pub name: String,
     pub band: Option<String>,
     pub channel: Option<u32>,
-    /// 该 radio 是否具备 KVR 所需能力（由 wpad 完整版 + 驱动决定）。
+    /// Whether this radio has the capabilities KVR requires (determined by full wpad plus the
+    /// driver).
     pub supports_kvr: bool,
 }
 
-/// 设备能力快照。所有角色/网桥/无线判断的输入。
+/// Device capability snapshot. The input to every role/bridge/wireless decision.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capabilities {
     pub model: Option<String>,
     pub board_name: Option<String>,
     pub radios: Vec<RadioInfo>,
     pub ports: Vec<PortInfo>,
-    /// 是否安装了完整版 `wpad`（`wpad-basic` 不含 802.11k/v/r）。
+    /// Whether full `wpad` is installed (`wpad-basic` lacks 802.11k/v/r).
     pub wpad_full: bool,
-    /// 是否支持 VLAN filtering / VLAN 跨设备同步。
+    /// Whether VLAN filtering / VLAN cross-device sync is supported.
     pub vlan_capable: bool,
 }
 
 impl Capabilities {
-    /// 需求 3：没有无线模块的设备禁止承担 AP 角色。
+    /// Requirement 3: a device without a wireless module must not take the AP role.
     pub fn has_wifi(&self) -> bool {
         !self.radios.is_empty()
     }
@@ -96,7 +98,7 @@ impl Capabilities {
         self.radios.iter().map(|r| r.name.clone()).collect()
     }
 
-    /// 是否具备 KVR 的前置条件。
+    /// Whether the prerequisites for KVR are met.
     pub fn kvr_ready(&self) -> bool {
         self.wpad_full && self.radios.iter().any(|r| r.supports_kvr)
     }

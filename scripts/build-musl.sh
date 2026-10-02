@@ -1,16 +1,16 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# 用 OpenWrt SDK 的 musl 工具链交叉编译 wifisync 单二进制。
+# Cross-compile the wifisync single binary with the OpenWrt SDK musl toolchain.
 #
-# 与 OpenWrt 官方 Rust 包（feeds/packages/lang/rust/rust-values.mk）保持一致的要点：
-#   * 链接器 = OpenWrt 工具链的 *-musl-gcc
-#   * -C target-feature=-crt-static（动态链接设备上的 musl，体积更小）
-#   * --locked（Cargo.lock 固定）
+# Points kept consistent with the OpenWrt official Rust package (feeds/packages/lang/rust/rust-values.mk):
+#   * linker = the OpenWrt toolchain's *-musl-gcc
+#   * -C target-feature=-crt-static (dynamically link the device's musl, smaller size)
+#   * --locked (pin Cargo.lock)
 #
-# 用法:
-#   scripts/build-musl.sh <openwrt-arch>          # 如 aarch64_cortex-a53
-#   WIFISYNC_SKIP_SDK=1 scripts/build-musl.sh ... # 复用已有 SDK（CI 缓存场景）
+# Usage:
+#   scripts/build-musl.sh <openwrt-arch>          # e.g. aarch64_cortex-a53
+#   WIFISYNC_SKIP_SDK=1 scripts/build-musl.sh ... # reuse an existing SDK (CI cache scenario)
 
 set -eu
 
@@ -22,46 +22,46 @@ TARGET=$(scripts/openwrt-arch.sh "$ARCH" target)
 TRIPLE=$(scripts/openwrt-arch.sh "$ARCH" triple)
 CPU=$(scripts/openwrt-arch.sh "$ARCH" cpu)
 
-echo "== 架构 $ARCH → target $TARGET / triple $TRIPLE / cpu $CPU"
+echo "== arch $ARCH -> target $TARGET / triple $TRIPLE / cpu $CPU"
 
-# 1. 准备 SDK 工具链
+# 1. Prepare the SDK toolchain
 # shellcheck disable=SC1091
 . scripts/sdk-env.sh "$TARGET"
 
-# 2. 确保 rust target 可用
+# 2. Make sure the rust target is available
 if command -v rustup >/dev/null 2>&1; then
 	rustup target add "$TRIPLE" >/dev/null 2>&1 || true
 fi
 
-# 3. cargo 需要的环境
+# 3. Environment needed by cargo
 TRIPLE_UPPER=$(echo "$TRIPLE" | tr 'a-z-' 'A-Z_')
 LINKER_VAR="CARGO_TARGET_${TRIPLE_UPPER}_LINKER"
 export "$LINKER_VAR=$WIFISYNC_CC"
 
-# 与 rust-values.mk 一致的 RUSTFLAGS：动态链接 musl + 目标 CPU
+# RUSTFLAGS matching rust-values.mk: dynamically link musl + target CPU
 RUSTFLAGS="-C target-cpu=$CPU -C target-feature=-crt-static"
 export RUSTFLAGS
 
-# 体积与 LTO 参数与 rust-values.mk 对齐
+# Size and LTO settings aligned with rust-values.mk
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export CARGO_PROFILE_RELEASE_DEBUG=false
 export CARGO_PROFILE_RELEASE_LTO=true
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=z
 
-echo "== 开始编译（linker=$WIFISYNC_CC）"
+echo "== building (linker=$WIFISYNC_CC)"
 cargo build --release --locked --target "$TRIPLE" -p wifisync
 
 OUT="target/$TRIPLE/release/wifisync"
 if [ ! -f "$OUT" ]; then
-	echo "错误：没有生成 $OUT" >&2
+	echo "error: $OUT was not produced" >&2
 	exit 1
 fi
 
-# 4. 记录产物信息（CI 上传、体积门禁都用它）
+# 4. Record artifact info (used by CI upload and the size gate)
 DIST="$ROOT/dist/$ARCH"
 mkdir -p "$DIST"
 cp "$OUT" "$DIST/wifisync"
-# SDK 里的 strip 未必支持全部架构，用 host 的 strip 只在能识别时执行
+# The SDK's strip may not support every architecture, so use the host strip only when it recognizes the file
 if command -v strip >/dev/null 2>&1; then
 	strip "$DIST/wifisync" 2>/dev/null || true
 fi
@@ -82,5 +82,5 @@ cat > "$DIST/build-info.json" <<EOF
 }
 EOF
 
-echo "== 产物 $DIST/wifisync（$SIZE 字节）"
+echo "== artifact $DIST/wifisync ($SIZE bytes)"
 echo "   $FILE_INFO"

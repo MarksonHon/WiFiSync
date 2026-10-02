@@ -1,19 +1,22 @@
-//! `NetworkProfile`：Controller 下发给 AP 的「网络信息」（需求 4 / 9 / 10）。
+//! `NetworkProfile`: the "network information" pushed by the Controller to the AP (requirement
+//! 4 / 9 / 10).
 //!
-//! AP 默认（`sync_mode = auto`）跟随 Controller 下发的档案，包含 Wi-Fi 信息。
+//! By default (`sync_mode = auto`) the AP follows the profile pushed by the Controller, including
+//! the Wi-Fi information.
 
 use crate::bridge::{BridgePlan, VlanDef};
 use serde::{Deserialize, Serialize};
 
-/// 802.11k/v/r 参数。**不在本地硬编码**，由 Wi-Fi 信息源产出后随档案下发。
+/// 802.11k/v/r parameters. **Not hard-coded locally**; produced by the Wi-Fi information source
+/// and pushed along with the profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvrConfig {
     pub k: bool,
     pub v: bool,
     pub r: bool,
-    /// 全局唯一的漫游域（4 位十六进制），由 Controller 统一分配。
+    /// Globally unique mobility domain (4 hex digits), allocated centrally by the Controller.
     pub mobility_domain: String,
-    /// 802.11r 走 DS（中继 / 跨设备链路下更稳）。
+    /// 802.11r over DS (more stable over relay / cross-device links).
     pub ft_over_ds: bool,
     pub ft_psk_generate_local: bool,
 }
@@ -32,7 +35,7 @@ impl Default for KvrConfig {
 }
 
 impl KvrConfig {
-    /// 缺省且合法的漫游域。
+    /// The default, valid mobility domain.
     pub fn is_valid_mobility_domain(value: &str) -> bool {
         value.len() == 4 && value.chars().all(|c| c.is_ascii_hexdigit())
     }
@@ -40,7 +43,7 @@ impl KvrConfig {
     pub fn validate(&self) -> Result<(), String> {
         if !Self::is_valid_mobility_domain(&self.mobility_domain) {
             return Err(format!(
-                "mobility_domain 必须是 4 位十六进制，当前为 `{}`",
+                "mobility_domain must be 4 hex digits, got `{}`",
                 self.mobility_domain
             ));
         }
@@ -48,15 +51,16 @@ impl KvrConfig {
     }
 }
 
-/// 单个 radio 的 Wi-Fi 档案。
+/// Wi-Fi profile of a single radio.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifiProfile {
-    /// uci radio 名，如 `radio0`。
+    /// Radio name in uci, e.g. `radio0`.
     pub radio: String,
     pub ssid: String,
     /// `none` / `psk2` / `sae` / `sae-mixed` ...
     pub auth: String,
-    /// 密钥引用（真实密钥保存在 `/etc/wifisync/secrets/` 下，档案里只放引用名）。
+    /// Key reference (the real key is stored under `/etc/wifisync/secrets/`; the profile only
+    /// holds the reference name).
     pub psk_ref: String,
     /// `2g` / `5g` / `6g`
     pub band: String,
@@ -84,15 +88,15 @@ impl WifiProfile {
     }
 }
 
-/// 完整网络档案：网桥 / VLAN / Wi-Fi。
+/// Complete network profile: bridges / VLANs / Wi-Fi.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkProfile {
-    /// 单调递增；冲突时高版本胜。
+    /// Monotonically increasing; on conflict the higher version wins.
     pub version: u64,
     pub updated_at: crate::Timestamp,
-    /// 列表结构，支持多网桥。
+    /// List structure, supporting multiple bridges.
     pub bridges: Vec<BridgePlan>,
-    /// 预留：VLAN 跨设备网桥同步。
+    /// Reserved: VLAN cross-device bridge sync.
     pub vlans: Vec<VlanDef>,
     pub wifi: Vec<WifiProfile>,
 }
@@ -114,12 +118,12 @@ impl NetworkProfile {
         self.bridges.is_empty() && self.vlans.is_empty() && self.wifi.is_empty()
     }
 
-    /// 是否接受对方档案（版本更高才接受）。
+    /// Whether to accept the other side's profile (only a higher version is accepted).
     pub fn accepts(&self, incoming: &Self) -> bool {
         incoming.version > self.version
     }
 
-    /// 合并：高版本赢；相同版本保留本地（避免抖动）。
+    /// Merge: the higher version wins; equal versions keep the local copy (avoids flapping).
     pub fn merge(&self, incoming: &Self) -> Self {
         if self.accepts(incoming) {
             incoming.clone()
@@ -128,28 +132,32 @@ impl NetworkProfile {
         }
     }
 
-    /// 校验档案内部一致性。
+    /// Validate the internal consistency of the profile.
     pub fn validate(&self) -> Result<(), String> {
         for wifi in &self.wifi {
             if wifi.ssid.is_empty() {
-                return Err(format!("{} 的 SSID 为空", wifi.radio));
+                return Err(format!("empty SSID for {}", wifi.radio));
             }
             if wifi.auth != "none" && wifi.psk_ref.is_empty() {
-                return Err(format!("{} 使用了加密但缺少密钥引用", wifi.radio));
+                return Err(format!(
+                    "{} uses encryption but has no key reference",
+                    wifi.radio
+                ));
             }
             wifi.kvr.validate()?;
         }
         for bridge in &self.bridges {
             if bridge.name.is_empty() {
-                return Err("网桥名为空".to_string());
+                return Err("bridge name must not be empty".to_string());
             }
         }
         Ok(())
     }
 
+    /// Language neutral one-line summary (used inside translated messages).
     pub fn summary(&self) -> String {
         format!(
-            "v{}: {} 网桥 / {} VLAN / {} Wi-Fi",
+            "v{}: {} bridge / {} vlan / {} wifi",
             self.version,
             self.bridges.len(),
             self.vlans.len(),
@@ -158,14 +166,15 @@ impl NetworkProfile {
     }
 }
 
-/// AP 的同步模式（需求 4）。
+/// AP sync mode (requirement 4).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
-    /// 默认：跟随 Controller 下发。
+    /// Default: follow what the Controller pushes.
     #[default]
     Auto,
-    /// 本地临时覆盖，Controller 版本更新不覆盖本地，UI 需显著警示。
+    /// Local temporary override; Controller version updates do not overwrite it, and the UI must
+    /// warn prominently.
     LocalOverride,
 }
 

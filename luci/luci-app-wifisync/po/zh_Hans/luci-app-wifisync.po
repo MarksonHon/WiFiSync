@@ -1,0 +1,771 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-wifisync\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: WifiSync contributors\n"
+"Language-Team: Simplified Chinese\n"
+"Language: zh_Hans\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# menu.d
+msgid "Overview"
+msgstr "状态总览"
+
+msgid "Roles"
+msgstr "角色"
+
+msgid "Gateway (zero-intrusion)"
+msgstr "Gateway（零侵入）"
+
+msgid "Controller (admission & distribution)"
+msgstr "Controller（准入与下发）"
+
+msgid "Bridge"
+msgstr "网桥"
+
+msgid "Wi-Fi & KVR"
+msgstr "Wi-Fi 与 KVR"
+
+msgid "Backup & failover"
+msgstr "备份与故障恢复"
+
+msgid "Diagnostics"
+msgstr "诊断"
+
+# common.js
+msgid "Yes"
+msgstr "是"
+
+msgid "No"
+msgstr "否"
+
+# overview.js
+msgid "(click \"Preview changes\" below to generate)"
+msgstr "（点击下方「预览改动」生成）"
+
+msgid "Applied"
+msgstr "已应用"
+
+msgid "Roles and duties"
+msgstr "角色与职责"
+
+msgid "Current roles"
+msgstr "当前角色"
+
+msgid "Automatic bridging"
+msgstr "是否自动建桥"
+
+msgid "Allowed (pure AP role)"
+msgstr "允许（纯 AP 角色）"
+
+msgid "Not allowed"
+msgstr "不允许"
+
+msgid "Device ID"
+msgstr "设备 ID"
+
+msgid "Sync mode"
+msgstr "同步模式"
+
+msgid "Version"
+msgstr "版本"
+
+msgid "Gateway / Controller are read-only, probe-only and push-only; only a \"pure AP\" device (AP without Controller and Gateway) merges all ports into br-lan."
+msgstr "Gateway / Controller 只读、只探测、只下发；只有「纯 AP」设备（有 AP 且无 Controller、无 Gateway）才会把所有网口并入 br-lan。"
+
+msgid "Hardware capabilities"
+msgstr "硬件能力"
+
+msgid "Device model"
+msgstr "设备型号"
+
+msgid "unknown"
+msgstr "未知"
+
+msgid "Wireless radios"
+msgstr "无线 radio"
+
+msgid "none"
+msgstr "无"
+
+msgid "Full wpad (KVR)"
+msgstr "完整版 wpad（KVR）"
+
+msgid "VLAN capable"
+msgstr "VLAN 能力"
+
+msgid "Ports"
+msgstr "网口"
+
+msgid "Failover (optional)"
+msgstr "故障恢复（可选）"
+
+msgid "State"
+msgstr "状态"
+
+msgid "Applicable"
+msgstr "适用性"
+
+msgid "Heartbeat target"
+msgstr "心跳目标"
+
+msgid "not configured"
+msgstr "未配置"
+
+msgid "This feature is off by default. Only AP devices restore the default network when the Controller/Gateway becomes unreachable."
+msgstr "该功能默认关闭。仅 AP 设备会在连不上 Controller/Gateway 时恢复设备默认网络。"
+
+msgid "Admission and backup"
+msgstr "准入与备份"
+
+msgid "Pending APs"
+msgstr "待批准 AP"
+
+msgid "Approved"
+msgstr "已批准"
+
+msgid "Initial baseline"
+msgstr "初始化基线"
+
+msgid "established"
+msgstr "已建立"
+
+msgid "not established"
+msgstr "未建立"
+
+msgid "Dirty shutdown"
+msgstr "上次退出是否异常"
+
+msgid "Change preview and apply"
+msgstr "改动预览与应用"
+
+msgid "Preview changes (dry-run)"
+msgstr "预览改动（dry-run）"
+
+msgid "Apply changes"
+msgstr "应用改动"
+
+msgid "Confirm apply"
+msgstr "确认应用成功"
+
+msgid "Confirmed, apply-guard released"
+msgstr "已确认，apply-guard 已解除"
+
+msgid "Revert last write"
+msgstr "回滚最近一次写入"
+
+msgid "Revert the most recent write?"
+msgstr "确定回滚最近一次写入吗？"
+
+msgid "Reverted"
+msgstr "已回滚"
+
+msgid "For non-AP roles the preview is always \"0 changes\" — the proof of the zero-intrusion design."
+msgstr "非 AP 角色下预览结果恒为「0 项改动」—— 这是零侵入设计的证明。"
+
+msgid "Controller"
+msgstr "控制器"
+
+msgid "AP"
+msgstr "AP"
+
+msgid "Gateway"
+msgstr "网关"
+
+# roles.js
+msgid "Roles saved"
+msgstr "角色已保存"
+
+msgid "empty"
+msgstr "空"
+
+msgid "(a bridge will be created)"
+msgstr "（将自动建桥）"
+
+msgid "(no bridge will be created)"
+msgstr "（不会建桥）"
+
+msgid "Role settings"
+msgstr "角色设置"
+
+msgid "This device has no wireless module: the AP role is disabled and is not part of the default roles."
+msgstr "本设备没有无线模块：AP 角色已被禁用，默认角色中也不包含 AP。"
+
+msgid "Does only two things: (1) validate new AP admission; (2) push network information. It never modifies any local network configuration."
+msgstr "只做两件事：① 新 AP 准入验证；② 网络信息下发。不改动本机任何网络配置。"
+
+msgid "AP (access point)"
+msgstr "AP（接入点）"
+
+msgid "Syncs the network information pushed by the Controller (including Wi-Fi). Only a \"pure AP\" (without Controller and Gateway) merges all ports into br-lan."
+msgstr "同步 Controller 下发的网络信息（含 Wi-Fi）。仅「纯 AP」（无 Controller、无 Gateway）才会把所有网口并入 br-lan。"
+
+msgid "This device has no wireless module and cannot take the AP role."
+msgstr "本设备无无线模块，不可承担 AP 角色。"
+
+msgid "Only asks you to select the corresponding LAN interface for identification and probing; it never modifies routes, NAT, firewall or any other network configuration."
+msgstr "只要求选择对应的 LAN 接口用于识别与探测，绝不修改路由、NAT、防火墙等任何网络配置。"
+
+msgid "Save and show impact"
+msgstr "保存并查看影响"
+
+msgid "Bridge rule: enable_bridge = ap && !gateway && !controller"
+msgstr "建桥规则：enable_bridge = ap && !gateway && !controller"
+
+msgid "Change preview"
+msgstr "改动预览"
+
+msgid "After saving the roles, this shows what the selected role combination would change."
+msgstr "保存角色后，这里显示相应角色组合会做哪些改动。"
+
+# gateway.js
+msgid "Factory role"
+msgstr "出厂角色"
+
+msgid "Carrier"
+msgstr "载波"
+
+msgid "e.g. 192.168.1.1 or 192.168.1.1:443"
+msgstr "如 192.168.1.1 或 192.168.1.1:443"
+
+msgid "Saved"
+msgstr "已保存"
+
+msgid "Warning: the local write plan is not empty, please check the overview page!"
+msgstr "注意：检测到本机写入计划非空，请到「状态总览」确认！"
+
+msgid "reachable"
+msgstr "可达"
+
+msgid "unreachable"
+msgstr "不可达"
+
+msgid "method"
+msgstr "方法"
+
+msgid "latency"
+msgstr "耗时"
+
+msgid "The Gateway role never changes your network for you: here you only select the \"corresponding LAN interface\", which is used for topology identification and connectivity probing. The program does not modify routes, NAT, the firewall or any content of /etc/config/network."
+msgstr "Gateway 角色不会代替你修改任何网络：这里只选择「对应的 LAN 接口」，用于拓扑识别与连通性探测。程序不会改动路由、NAT、防火墙或任何 /etc/config/network 内容。"
+
+msgid "Corresponding LAN interfaces"
+msgstr "对应 LAN 接口"
+
+msgid "No physical ports were detected (possibly a host or virtual environment)."
+msgstr "没有探测到物理网口（可能是宿主机/虚拟环境）。"
+
+msgid "After selecting them, open the overview page and run a dry-run to confirm that it reports 0 changes."
+msgstr "选定后请到「状态总览」点一次 dry-run，确认改动数为 0。"
+
+msgid "Connectivity probe (read-only)"
+msgstr "连通性探测（只读）"
+
+msgid "Probe target"
+msgstr "探测目标"
+
+msgid "Probe"
+msgstr "探测"
+
+msgid "Whether the Controller can reach the Gateway is confirmed by you separately: the program only performs ICMP/TCP probes and never writes the routing table, changes the firewall or touches NAT."
+msgstr "Controller 与 Gateway 是否连通由你单独确认：程序只做 ICMP/TCP 探测，不会写路由表、不改防火墙、不动 NAT。"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Save LAN interface selection"
+msgstr "保存 LAN 接口选择"
+
+# controller.js
+msgid "No device has reported yet"
+msgstr "暂无设备上报"
+
+msgid "Pending"
+msgstr "待批准"
+
+msgid "Rejected"
+msgstr "已拒绝"
+
+msgid "Approve"
+msgstr "批准"
+
+msgid "Reject"
+msgstr "拒绝"
+
+msgid "Revoke"
+msgstr "撤销"
+
+msgid "Approve device"
+msgstr "批准设备"
+
+msgid "Reject device"
+msgstr "拒绝设备"
+
+msgid "Revoke approval of device"
+msgstr "撤销批准设备"
+
+msgid "Wi-Fi information of the Controller itself"
+msgstr "控制器自身的 Wi-Fi 信息"
+
+msgid "Wi-Fi information of the Gateway (read-only fetch)"
+msgstr "网关的 Wi-Fi 信息（只读拉取）"
+
+msgid "Custom information"
+msgstr "自定义信息"
+
+msgid "Always available (if this device is also an AP, its own wireless configuration is modified and the confirmation below is required)"
+msgstr "始终可用（若本设备同时承担 AP，会修改本机无线配置，需勾选下方确认）"
+
+msgid "Available"
+msgstr "可用"
+
+msgid "Unavailable"
+msgstr "不可用"
+
+msgid "Please select an available Wi-Fi information source"
+msgstr "请选择一个可用的 Wi-Fi 信息源"
+
+msgid "Wi-Fi information source saved"
+msgstr "Wi-Fi 信息源已保存"
+
+msgid "(it still has to be confirmed before being applied locally)"
+msgstr "（仍需确认后才能应用到本机）"
+
+msgid "This device does not take the Controller role: admission and distribution are unavailable."
+msgstr "本设备未承担 Controller 角色：准入与下发不可用。"
+
+msgid "New AP admission"
+msgstr "新 AP 准入"
+
+msgid "MAC"
+msgstr "MAC"
+
+msgid "Hostname"
+msgstr "主机名"
+
+msgid "Source"
+msgstr "来源"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "An AP that has not passed admission receives no information and writes no local configuration (validated twice on the service side)."
+msgstr "未通过准入的 AP 不会被下发任何信息，也不会写入本机配置（服务端双重校验）。"
+
+msgid "Wi-Fi information source"
+msgstr "Wi-Fi 信息源"
+
+msgid "Gateway address"
+msgstr "网关地址"
+
+msgid "If the Gateway reports \"no Wi-Fi\", that source is disabled; the same applies when the Controller itself has no Wi-Fi."
+msgstr "若网关上报「没有 Wi-Fi」，该来源会被禁用；控制器自身没有 Wi-Fi 时同理。"
+
+msgid "Custom information (only effective when kind = custom)"
+msgstr "自定义信息（仅 kind = custom 时生效）"
+
+msgid "Encryption"
+msgstr "加密方式"
+
+msgid "Key reference"
+msgstr "密钥引用"
+
+msgid "Band"
+msgstr "频段"
+
+msgid "Confirm that the local wireless configuration may be modified"
+msgstr "确认可以修改本机无线配置"
+
+msgid "When the AP and the Controller are the same device and custom information is selected, the local Wi-Fi is modified as well, which must be confirmed explicitly."
+msgstr "当「AP 与 Controller 是同一台设备」且选择自定义信息时，本机 Wi-Fi 也会被修改，必须显式确认。"
+
+msgid "Save Wi-Fi information source"
+msgstr "保存 Wi-Fi 信息源"
+
+msgid "The Controller only distributes this information to admitted APs; choosing \"the Controller itself\" never rewrites the local configuration of the Controller."
+msgstr "Controller 只把这些信息下发给已准入的 AP；选择「控制器自身」时不会改写控制器本机配置。"
+
+# bridge.js
+msgid "This device is a \"pure AP\": all ports (including the factory WAN port) are merged into br-lan."
+msgstr "本设备是「纯 AP」：所有网口（含出厂 WAN 口）会被并入 br-lan。"
+
+msgid "The current role combination creates no bridge and touches no port."
+msgstr "当前角色组合不建桥、不动网口。"
+
+msgid "Bridge plan"
+msgstr "网桥规划"
+
+msgid "Member ports"
+msgstr "成员端口"
+
+msgid "VLAN filtering"
+msgstr "VLAN filtering"
+
+msgid "VLANs"
+msgstr "VLAN 数"
+
+msgid "No usable physical port."
+msgstr "没有可用的物理网口。"
+
+msgid "No bridge needed."
+msgstr "无需建桥。"
+
+msgid "Bridge name"
+msgstr "网桥名"
+
+msgid "All ports"
+msgstr "全部网口"
+
+msgid "LAN ports"
+msgstr "LAN 口"
+
+msgid "WAN ports"
+msgstr "WAN 口"
+
+msgid "By default only one br-lan is generated; the model is a multi-bridge + VLAN list structure for future extensions (cross-device VLAN sync is not enabled yet)."
+msgstr "默认只生成一个 br-lan；模型是多网桥 + VLAN 列表结构，便于后续扩展（VLAN 跨设备同步尚未启用）。"
+
+msgid "What would be written (dry-run)"
+msgstr "将写入的内容（dry-run）"
+
+msgid "(none)"
+msgstr "（无）"
+
+msgid "This is a zero-write plan: the current role combination does not touch any network configuration."
+msgstr "这是零写入计划：本角色组合不会触碰任何网络配置。"
+
+msgid "A snapshot is taken automatically before these changes are applied, so they can be rolled back at any time."
+msgstr "以上改动会在应用前自动保存快照，可随时回滚。"
+
+# wifi.js
+msgid "(refreshed after saving)"
+msgstr "（保存后自动刷新）"
+
+msgid "Full wpad detected: 802.11k/v/r is available."
+msgstr "检测到完整版 wpad，802.11k/v/r 可用。"
+
+msgid "KVR unavailable"
+msgstr "KVR 不可用"
+
+msgid "the full wpad package is required"
+msgstr "需要完整版 wpad"
+
+msgid "Install wpad-mbedtls (or wpad) instead of wpad-basic-mbedtls."
+msgstr "请安装 wpad-mbedtls（或 wpad）而不是 wpad-basic-mbedtls。"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Ignored when wpad does not support it"
+msgstr "wpad 不支持时会被忽略"
+
+msgid "Refusing to enable KVR: the full wpad package is missing."
+msgstr "缺少完整版 wpad，拒绝开启 KVR。"
+
+msgid "KVR parameters saved (distributed to APs with the NetworkProfile)"
+msgstr "KVR 参数已保存（随 NetworkProfile 下发给 AP）"
+
+msgid "KVR (802.11k / v / r)"
+msgstr "KVR（802.11k / v / r）"
+
+msgid "Device radios"
+msgstr "设备 radio"
+
+msgid "Mobility domain"
+msgstr "漫游域 mobility_domain"
+
+msgid "Save KVR parameters"
+msgstr "保存 KVR 参数"
+
+msgid "All KVR parameters are distributed to every AP with the NetworkProfile pushed by the Controller, keeping mobility_domain consistent."
+msgstr "所有 KVR 参数随 Controller 下发的 NetworkProfile 统一下发到各 AP，保证 mobility_domain 一致。"
+
+msgid "Wi-Fi relay (no mesh)"
+msgstr "Wi-Fi 中继（不使用 mesh）"
+
+msgid "Relay always uses a standard Wi-Fi relay: wpa_supplicant(STA) upstream plus hostapd(AP) downstream."
+msgstr "中继一律使用标准 Wi-Fi 中继：上行 wpa_supplicant(STA) + 下行 hostapd(AP)。"
+
+msgid "This program does not implement mesh networking such as 802.11s or batman."
+msgstr "本程序不实现 802.11s / batman 等 mesh 组网。"
+
+msgid "If 802.11r is restricted on the relay link, it automatically falls back to ft_over_ds."
+msgstr "中继链路下若 802.11r 受限，会自动回退到 ft_over_ds。"
+
+msgid "Resulting write plan"
+msgstr "对应的写入计划"
+
+# backup.js
+msgid "No snapshots"
+msgstr "暂无快照"
+
+msgid "Verify"
+msgstr "校验"
+
+msgid "network/wireless/dhcp/firewall/system will be overwritten from the baseline as a whole; user changes in these files will be lost. Continue?"
+msgstr "将按基线整体覆盖 network/wireless/dhcp/firewall/system，用户在这些文件里的改动都会丢失。确定继续？"
+
+msgid "Only the keys changed by WifiSync are restored, all other configuration is preserved. Continue?"
+msgstr "只会还原 WifiSync 改动过的键，其它配置保持不变。确定继续？"
+
+msgid "Restore finished"
+msgstr "恢复完成"
+
+msgid "Restore the default network"
+msgstr "恢复默认网络"
+
+msgid "Restore and reboot"
+msgstr "恢复后重启"
+
+msgid "Failover settings saved"
+msgstr "故障恢复设置已保存"
+
+msgid "Discipline: the initial network baseline is saved before the service starts and the previous network is restored before it stops."
+msgstr "纪律：服务启动前自动保存初始化网络基线，服务停止前自动恢复原有网络。"
+
+msgid "The default restore scope is managed_only (only the keys changed by WifiSync are restored)."
+msgstr "恢复默认范围是 managed_only（只还原 WifiSync 改过的键）。"
+
+msgid "Baseline state"
+msgstr "基线状态"
+
+msgid "not established (created on the first service start)"
+msgstr "未建立（首次启动服务时创建）"
+
+msgid "Baseline path"
+msgstr "基线路径"
+
+msgid "Last shutdown"
+msgstr "上次退出"
+
+msgid "abnormal"
+msgstr "异常"
+
+msgid "normal"
+msgstr "正常"
+
+msgid "Verify baseline integrity"
+msgstr "校验基线完整性"
+
+msgid "Create snapshot now"
+msgstr "立即创建快照"
+
+msgid "Snapshot created"
+msgstr "快照已创建"
+
+msgid "Prune old snapshots"
+msgstr "清理旧快照"
+
+msgid "Pruned old snapshots"
+msgstr "已清理旧快照"
+
+msgid "(the baseline is never pruned)"
+msgstr "（基线永不清理）"
+
+msgid "Restore baseline (managed_only)"
+msgstr "恢复基线（managed_only）"
+
+msgid "Restore baseline (full)"
+msgstr "恢复基线（full）"
+
+msgid "The sha256 checksum is verified before restoring; a failed check rejects the restore and the baseline is never deleted."
+msgstr "恢复前会先校验 sha256；校验不通过会直接拒绝执行，且永远不会删除基线。"
+
+msgid "Snapshot list"
+msgstr "快照列表"
+
+msgid "Kind"
+msgstr "类型"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "Size"
+msgstr "大小"
+
+msgid "Path"
+msgstr "路径"
+
+msgid "Failover (optional, off by default)"
+msgstr "故障恢复（可选，默认关闭）"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Only effective on AP devices: the default network is restored after the Controller/Gateway has been unreachable for the configured time."
+msgstr "仅 AP 设备生效：连不上 Controller/Gateway 超过设定时间后恢复设备默认网络。"
+
+msgid "Gateway / Controller never trigger such a rollback (zero-intrusion principle)."
+msgstr "Gateway / Controller 不会触发这类回滚（零侵入原则）。"
+
+msgid "Heartbeat loss timeout (seconds)"
+msgstr "心跳丢失超时（秒）"
+
+msgid "Apply confirmation window (seconds)"
+msgstr "应用确认窗口（秒）"
+
+msgid "Trigger action"
+msgstr "触发动作"
+
+msgid "Heartbeat target (Controller/Gateway)"
+msgstr "心跳目标（Controller/Gateway）"
+
+msgid "Save failover settings"
+msgstr "保存故障恢复设置"
+
+# diagnostics.js
+msgid "(no logs yet: the stderr of the service is collected by procd, use logread to inspect it)"
+msgstr "（暂无日志：服务的 stderr 由 procd 收集，可用 logread 查看）"
+
+msgid "(no logs yet)"
+msgstr "（暂无日志）"
+
+msgid "Copied to clipboard"
+msgstr "已复制到剪贴板"
+
+msgid "Self-check information (can be pasted into an issue)"
+msgstr "自检信息（可直接贴到 issue）"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Write plan (full dry-run)"
+msgstr "写入计划（dry-run 全量）"
+
+msgid "For non-AP roles this is always \"0 changes\", which is direct evidence of the zero-intrusion design."
+msgstr "非 AP 角色时此处恒为「0 项改动」，这是零侵入设计的直接证据。"
+
+msgid "Service log"
+msgstr "服务日志"
+
+msgid "Refresh log"
+msgstr "刷新日志"
+
+msgid "Copy log"
+msgstr "复制日志"
+
+msgid "The service log is also written to syslog and can be inspected with `logread -e wifisync`."
+msgstr "服务日志同时写入 syslog，可用 `logread -e wifisync` 查看。"
+
+msgid "Common diagnostic commands"
+msgstr "常用诊断命令"
+
+# ── backend messages (crates/wifisync-core/src/message.rs, daemon) ────────
+msgid "(no changes)"
+msgstr "（无改动）"
+
+msgid "The current role combination creates no bridge and touches no port (%{blockers})"
+msgstr "当前角色组合不建桥、不动网口（%{blockers}）"
+
+msgid "the AP role is not enabled"
+msgstr "未承担 AP 角色"
+
+msgid "Bridge plan: %{bridge}"
+msgstr "网桥规划：%{bridge}"
+
+msgid "KVR: k=%{k} v=%{v} r=%{r} mobility_domain=%{mobility_domain} ft_over_ds=%{ft_over_ds}"
+msgstr "KVR：k=%{k} v=%{v} r=%{r} mobility_domain=%{mobility_domain} ft_over_ds=%{ft_over_ds}"
+
+msgid "This device does not take the AP role: the Wi-Fi information is only distributed to APs and does not change the local wireless configuration"
+msgstr "本设备不承担 AP 角色：Wi-Fi 信息仅用于下发给 AP，不修改本机无线配置"
+
+msgid "Referenced distributed profile %{profile}"
+msgstr "参考下发档案 %{profile}"
+
+msgid "This device has no wireless module; the AP role was removed and the option is disabled"
+msgstr "本设备没有无线模块，已取消 AP 角色并禁用该选项"
+
+msgid "Disabled"
+msgstr "已关闭"
+
+msgid "Not applicable (not an AP device)"
+msgstr "不适用（非 AP 设备）"
+
+msgid "Monitoring"
+msgstr "监控中"
+
+msgid "Waiting for apply confirmation"
+msgstr "等待应用确认"
+
+msgid "Waiting for heartbeat recovery"
+msgstr "等待心跳恢复"
+
+msgid "Restore triggered"
+msgstr "已触发恢复"
+
+msgid "The Controller itself has no Wi-Fi"
+msgstr "控制器自身没有 Wi-Fi"
+
+msgid "The Gateway reports that it has no Wi-Fi"
+msgstr "网关上报没有 Wi-Fi"
+
+msgid "No Gateway selected or connectivity not confirmed yet"
+msgstr "网关未选定或连通性未确认"
+
+msgid "Wi-Fi information has not been fetched from the Gateway successfully yet"
+msgstr "尚未成功从网关拉取 Wi-Fi 信息"
+
+msgid "Fetching the Wi-Fi information from the Gateway failed"
+msgstr "拉取网关 Wi-Fi 信息失败"
+
+msgid "Unknown source"
+msgstr "未知来源"
+
+msgid "Source: the Controller's own Wi-Fi information (used as a template only, the local configuration of the Controller is not changed)"
+msgstr "来源：控制器自身的 Wi-Fi 信息（仅作为模板下发，不改控制器本机配置）"
+
+msgid "Source: the Gateway's Wi-Fi information (read-only fetch, never written back to the Gateway)"
+msgstr "来源：网关的 Wi-Fi 信息（只读拉取，绝不写回网关）"
+
+msgid "Source: user-defined Wi-Fi information"
+msgstr "来源：用户自定义 Wi-Fi 信息"
+
+msgid "Note: this device is also an AP, applying custom Wi-Fi information will modify its local wireless configuration"
+msgstr "注意：本设备同时承担 AP，应用自定义 Wi-Fi 信息会修改本机无线配置"
+
+msgid "This device has no wireless module"
+msgstr "本设备没有无线模块"
+
+msgid "The full wpad package (with 802.11k/v/r) is required: install `wpad` instead of `wpad-basic`"
+msgstr "需要完整版 wpad（含 802.11k/v/r），请安装 `wpad` 而不是 `wpad-basic`"
+
+msgid "Backup integrity check passed"
+msgstr "备份完整性校验通过"
+
+msgid "Backup check failed: %{missing} missing, %{changed} changed, %{extra} extra"
+msgstr "备份校验失败：缺失 %{missing} 项、内容变化 %{changed} 项、多出 %{extra} 项"
+
+msgid "Restore blocked: %{reason}"
+msgstr "恢复被阻止：%{reason}"
+
+msgid "Restored %{restored} item(s), %{failed} failed"
+msgstr "已恢复 %{restored} 项，失败 %{failed} 项"
+
+msgid "This role combination does not need to modify the network (0 changes)"
+msgstr "本角色组合不需要修改网络（0 项改动）"
+
+msgid "Applied %{count} change(s)"
+msgstr "已应用 %{count} 项改动"
+
+msgid "The Gateway role does not modify any network configuration; the interfaces are only recorded for identification and probing"
+msgstr "Gateway 角色不会修改任何网络配置，这里只记录接口用于识别与探测"
+
+msgid "No snapshot yet: start the service first (the initial baseline is created automatically) or create one with `wifisync backup create`"
+msgstr "还没有任何快照：请先启动服务（会自动建立初始化基线）或用 `wifisync backup create` 手动创建"
+
+msgid "%{address} is reachable"
+msgstr "%{address} 可达"
+
+msgid "%{address} is unreachable (TCP connection failed)"
+msgstr "%{address} 不可达（TCP 连接失败）"
+
+msgid "Cannot resolve %{address}: %{error}"
+msgstr "无法解析 %{address}：%{error}"
+
+msgid "ICMP reply: %{output}"
+msgstr "ICMP 回应：%{output}"

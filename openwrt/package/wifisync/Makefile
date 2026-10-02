@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# WifiSync —— OpenWrt 包定义
+# WiFiSync - OpenWrt package definition
 #
-# 构建方式完全沿用 OpenWrt 官方 Rust 包的做法：
-#   * 依赖 `rust/host`（feeds/packages/lang/rust）
-#   * include rust-package.mk，使用 `cargo install --root $(PKG_INSTALL_DIR)`
-#   * 架构约束复用 `RUST_ARCH_DEPENDS`
+# The build follows the OpenWrt official Rust package approach exactly:
+#   * depends on `rust/host` (feeds/packages/lang/rust)
+#   * includes rust-package.mk and uses `cargo install --root $(PKG_INSTALL_DIR)`
+#   * reuses `RUST_ARCH_DEPENDS` for architecture constraints
 #
-# 源码就在本 feed 内，由 Build/Prepare 从仓库根目录复制（无需 PKG_SOURCE）。
+# Sources live inside this feed; Build/Prepare copies them from the repository root (no PKG_SOURCE needed).
 
 include $(TOPDIR)/rules.mk
 
@@ -17,7 +17,7 @@ PKG_RELEASE:=1
 
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
-PKG_MAINTAINER:=WifiSync contributors
+PKG_MAINTAINER:=WiFiSync contributors
 
 PKG_BUILD_DEPENDS:=rust/host
 PKG_BUILD_PARALLEL:=1
@@ -26,24 +26,26 @@ PKG_BUILD_FLAGS:=no-mips16
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk
 
-# 仓库根目录（本包位于 <repo>/openwrt/package/wifisync）
+# Repository root (this package is at <repo>/openwrt/package/wifisync)
 REPO_ROOT:=$(realpath $(CURDIR)/../../..)
 
 define Package/wifisync
   SECTION:=net
   CATEGORY:=Network
-  TITLE:=WifiSync — 家庭局域网（含有线+无线）组网工具
+  TITLE:=WiFiSync — home LAN (wired + wireless) networking tool
   URL:=https://github.com/openwrt-wifisync/wifisync
   DEPENDS:=$(RUST_ARCH_DEPENDS) +wpad +kmod-br-netfilter
 endef
 
 define Package/wifisync/description
-  WifiSync 用「Controller 准入 + 网络信息下发 + 802.11k/v/r 漫游 + 标准 Wi-Fi 中继」
-  组建家庭单网。
-  设计原则：默认零侵入 —— Gateway/Controller 不修改任何既有网络配置，
-  只有「纯 AP」设备（有 AP 且无 Controller、无 Gateway）才会把所有网口并入 br-lan。
-  服务启动前保存初始化网络基线，停止前恢复原有网络。
-  注意：802.11k/v/r 需要完整版 wpad（wpad-basic-mbedtls 不含），缺失时程序会拒绝开启 KVR。
+  WiFiSync builds a single home network from "Controller admission + network information
+  distribution + 802.11k/v/r roaming + standard Wi-Fi relay".
+  Design principle: zero intrusion by default — the Gateway/Controller roles never modify any
+  existing network configuration; only a "pure AP" device (AP without Controller and Gateway)
+  merges all ports into br-lan.
+  The initial network baseline is saved before the service starts and restored before it stops.
+  Note: 802.11k/v/r requires the full wpad package (wpad-basic-mbedtls does not include it); the
+  program refuses to enable KVR when it is missing.
 endef
 
 define Build/Prepare
@@ -55,7 +57,7 @@ define Build/Prepare
 	$(CP) $(REPO_ROOT)/LICENSE $(PKG_BUILD_DIR)/ 2>/dev/null || true
 endef
 
-# 单二进制：daemon / CLI / rpcd 插件三种模式
+# Single binary: daemon / CLI / rpcd plugin, three modes
 define Build/Compile
 	$(call Build/Compile/Cargo,crates/wifisync)
 endef
@@ -77,7 +79,7 @@ define Package/wifisync/conffiles
 /etc/config/wifisync
 endef
 
-# 卸载前先恢复网络，避免设备被留在半配置状态
+# Restore the network before uninstall to avoid leaving the device half-configured
 define Package/wifisync/prerm
 	#!/bin/sh
 	[ -x "$${IPKG_INSTROOT}/usr/bin/wifisync" ] || exit 0

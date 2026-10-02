@@ -1,24 +1,24 @@
 name: OpenWrt packages
 
-# 生成**官方格式**的安装包（25.12 为 .apk，旧版为 .ipk）。
+# Produce **official-format** installers (25.12 uses .apk, older releases use .ipk).
 #
-# 这条路完全照 OpenWrt 官方 Rust 包的流程走：
-#   下载官方 SDK → feeds update/install（拿到 feeds/packages/lang/rust）
+# This path follows the OpenWrt official Rust package workflow exactly:
+#   download the official SDK → feeds update/install (to get feeds/packages/lang/rust)
 #   → make package/wifisync/compile → bin/packages/<arch>/*.apk
 #
-# 注意：它会在 SDK 里从源码构建 `rust/host`（rustc 引导），
-# 单架构通常需要 30–90 分钟，因此只在手动触发 / 定时任务里跑。
-# 日常提交用 ci.yml 的 cross-build（快得多，等价于官方工具链编译）。
+# Note: it builds `rust/host` from source inside the SDK (rustc bootstrap),
+# a single architecture usually takes 30-90 minutes, so it only runs on manual triggers / schedules.
+# Day-to-day commits use cross-build in ci.yml (much faster, equivalent to an official toolchain build).
 
 on:
   workflow_dispatch:
     inputs:
       arch:
-        description: "只构建指定架构（留空 = 全部 x86/ARM64）"
+        description: "Build only the specified architecture (empty = all x86/ARM64)"
         required: false
         default: ""
   schedule:
-    # 每月 1 号 UTC 03:00 跑一次，追踪 OpenWrt feed 变化
+    # Runs at 03:00 UTC on the 1st of each month to track OpenWrt feed changes
     - cron: "0 3 1 * *"
 
 concurrency:
@@ -49,7 +49,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 过滤（手动指定架构时）
+      - name: Filter (when an architecture is specified manually)
         id: filter
         run: |
           WANTED="${{ github.event.inputs.arch }}"
@@ -59,11 +59,11 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 安装依赖
+      - name: Install dependencies
         if: steps.filter.outputs.skip != 'true'
         run: sudo apt-get update && sudo apt-get install -y zstd file build-essential rsync
 
-      - name: 下载官方 SDK 并加入本仓库作为 feed
+      - name: Download the official SDK and add this repository as a feed
         if: steps.filter.outputs.skip != 'true'
         run: |
           set -eu
@@ -71,32 +71,32 @@ jobs:
           . scripts/sdk-env.sh "$TARGET"
           cd "$WIFISYNC_SDK"
 
-          # 本仓库即 feed（src-link 方式，不复制源码）
+          # This repository is the feed (src-link, no source copy)
           echo "src-link wifisync $GITHUB_WORKSPACE" >> feeds.conf.default
           cp feeds.conf.default feeds.conf
           cat feeds.conf
 
-          # 官方 feed（含 feeds/packages/lang/rust —— rust-package.mk 与 rust/host）
+          # Official feeds (including feeds/packages/lang/rust — rust-package.mk and rust/host)
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           make defconfig
 
-      - name: 构建 wifisync 包
+      - name: Build the wifisync package
         if: steps.filter.outputs.skip != 'true'
         run: |
           set -eu
           cd "$WIFISYNC_SDK"
           make package/wifisync/compile V=s -j"$(nproc)"
 
-      - name: 构建 LuCI 包
+      - name: Build the LuCI package
         if: steps.filter.outputs.skip != 'true'
         run: |
           set -eu
           cd "$WIFISYNC_SDK"
           make package/luci-app-wifisync/compile V=s -j"$(nproc)" || \
-            echo "::warning::LuCI 包构建失败（通常是 feeds/luci 未同步）"
+            echo "::warning::LuCI package build failed (usually because feeds/luci is not synced)"
 
-      - name: 收集产物
+      - name: Collect artifacts
         if: always() && steps.filter.outputs.skip != 'true'
         run: |
           set -eu
@@ -106,7 +106,7 @@ jobs:
             | xargs -r -I{} cp -v {} dist/${{ matrix.arch }}/ || true
           ls -l dist/${{ matrix.arch }} || true
 
-      - name: 写入构建信息
+      - name: Write build info
         if: always() && steps.filter.outputs.skip != 'true'
         run: |
           cat > dist/${{ matrix.arch }}/package-info.json <<EOF

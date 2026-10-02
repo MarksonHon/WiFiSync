@@ -1,30 +1,33 @@
-//! Wi-Fi 信息源（需求 5 / 9）。
+//! Wi-Fi information sources (requirement 5 / 9).
 //!
-//! Controller 的 Wi-Fi 信息有三个来源，且每个来源都有明确的启用/禁用条件：
+//! The Controller's Wi-Fi information has three sources, each with explicit enable/disable
+//! conditions:
 //!
-//! | 来源 | 取值 | 禁用条件 |
+//! | Source | Value | Disable condition |
 //! |------|------|---------|
-//! | [`WifiSourceKind::ControllerSelf`] | Controller 本机无线配置 | Controller 上报「无 Wi-Fi」 |
-//! | [`WifiSourceKind::Gateway`] | **只读**拉取 Gateway 的 Wi-Fi 档案 | Gateway 上报「无 Wi-Fi」/ 未配置 / 拉取失败 |
-//! | [`WifiSourceKind::Custom`] | 用户在 LuCI 手工填写 | 始终可用 |
+//! | [`WifiSourceKind::ControllerSelf`] | the Controller's own wireless config | the Controller reports "no Wi-Fi" |
+//! | [`WifiSourceKind::Gateway`] | **read-only** fetch of the Gateway's Wi-Fi profile | the Gateway reports "no Wi-Fi" / not configured / fetch failed |
+//! | [`WifiSourceKind::Custom`] | entered by hand by the user in LuCI | always available |
 //!
-//! 关键约束：**只有当本机承担 AP 角色时**，解析结果才会被写回本机无线配置；
-//! 而 `custom` 来源在「AP 与 Controller 同设备」时必须由用户显式确认
-//! （因为这会修改该设备自身的 Wi-Fi）。
+//! Key constraint: the resolved result is written back to the local wireless configuration **only
+//! when this device takes the AP role**; and the `custom` source must be explicitly confirmed by
+//! the user when "AP and Controller are the same device" (because that modifies the device's own
+//! Wi-Fi).
 
 use crate::capability::Capabilities;
 use crate::error::{CoreError, CoreResult};
+use crate::message::Message;
 use crate::profile::{KvrConfig, WifiProfile};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WifiSourceKind {
-    /// 控制器自身的 Wi-Fi 信息
+    /// The controller's own Wi-Fi information
     ControllerSelf,
-    /// 网关的 Wi-Fi 信息（只读）
+    /// The gateway's Wi-Fi information (read-only)
     Gateway,
-    /// 自定义信息
+    /// Custom information
     Custom,
 }
 
@@ -49,7 +52,7 @@ impl WifiSourceKind {
     }
 }
 
-/// 自定义 Wi-Fi 参数（LuCI 表单）。
+/// Custom Wi-Fi parameters (LuCI form).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CustomWifi {
     pub ssid: String,
@@ -78,12 +81,12 @@ impl Default for CustomWifi {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifiSourceConfig {
     pub kind: WifiSourceKind,
-    /// Gateway 探针/拉取端点，如 `192.168.1.1:8443`。
+    /// Gateway probe/fetch endpoint, e.g. `192.168.1.1:8443`.
     pub gateway_endpoint: Option<String>,
-    /// 拉取凭据引用名（真实密钥在 `/etc/wifisync/secrets/`）。
+    /// Fetch credential reference name (the real key is in `/etc/wifisync/secrets/`).
     pub gateway_credential_ref: Option<String>,
     pub custom: Option<CustomWifi>,
-    /// 拉取失败时是否回退 `controller_self`（默认否，只告警）。
+    /// Whether to fall back to `controller_self` when the fetch fails (default no; warn only).
     pub allow_fallback: bool,
 }
 
@@ -99,20 +102,22 @@ impl Default for WifiSourceConfig {
     }
 }
 
-/// 解析所需的上下文。
+/// Context required for resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceContext {
-    /// 本机角色是否包含 ap —— 决定结果是否写回本机无线配置。
+    /// Whether the local roles include ap — decides whether the result is written back to the
+    /// local wireless configuration.
     pub local_is_ap: bool,
-    /// Controller 是否上报自身有 Wi-Fi。
+    /// Whether the Controller reports that it has Wi-Fi.
     pub controller_reports_wifi: bool,
-    /// Gateway 是否上报有 Wi-Fi（`None` = 未知/未联通）。
+    /// Whether the Gateway reports Wi-Fi (`None` = unknown / not reachable).
     pub gateway_reports_wifi: Option<bool>,
-    /// 是否已成功从 Gateway 拉取到档案。
+    /// Whether a profile was successfully fetched from the Gateway.
     pub gateway_profile_fetched: bool,
-    /// 用户是否已显式确认「可以修改本机无线配置」。
+    /// Whether the user has explicitly confirmed that "the local wireless configuration may be
+    /// modified".
     pub local_wifi_change_confirmed: bool,
-    /// 可选：从 Gateway 拉取的档案（只读结果）。
+    /// Optional: the profile fetched from the Gateway (read-only result).
     pub gateway_profile: Option<WifiProfile>,
 }
 
@@ -129,23 +134,25 @@ impl Default for SourceContext {
     }
 }
 
-/// 解析结果。
+/// Resolution result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedWifi {
     pub profile: WifiProfile,
-    /// 是否会把这份 Wi-Fi 配置写进本机（= 本机承担 AP 角色）。
+    /// Whether this Wi-Fi configuration will be written locally (= this device takes the AP role).
     pub will_modify_local: bool,
-    /// 是否需要用户二次确认才能应用（custom + 本机 AP）。
+    /// Whether a second user confirmation is needed before applying (custom + local AP).
     pub requires_confirmation: bool,
     pub source: WifiSourceKind,
-    pub notes: Vec<String>,
+    /// Explanations for the UI (translated by the front end).
+    pub notes: Vec<Message>,
 }
 
-/// 某个来源在给定上下文下是否可用（供 LuCI 置灰 + daemon 双重校验）。
+/// Whether a source is available under the given context (used for LuCI greying out plus a
+/// second check in the daemon).
 pub fn source_availability(
     config: &WifiSourceConfig,
     ctx: &SourceContext,
-) -> Vec<(WifiSourceKind, bool, Option<String>)> {
+) -> Vec<(WifiSourceKind, bool, Option<Message>)> {
     WifiSourceKind::ALL
         .iter()
         .map(|kind| {
@@ -154,23 +161,27 @@ pub fn source_availability(
                     if ctx.controller_reports_wifi {
                         None
                     } else {
-                        Some("控制器自身没有 Wi-Fi".to_string())
+                        Some(Message::new("wifi_source.reason.controller_no_wifi"))
                     }
                 }
                 WifiSourceKind::Gateway => {
                     let mut reason = None;
                     match ctx.gateway_reports_wifi {
-                        Some(false) => reason = Some("网关上报没有 Wi-Fi".to_string()),
-                        None => reason = Some("网关未选定或连通性未确认".to_string()),
+                        Some(false) => {
+                            reason = Some(Message::new("wifi_source.reason.gateway_no_wifi"))
+                        }
+                        None => {
+                            reason = Some(Message::new("wifi_source.reason.gateway_not_selected"))
+                        }
                         Some(true) => {}
                     }
-                    // 选中的来源才强制要求拉取成功
+                    // Only the selected source requires a successful fetch
                     if config.kind == WifiSourceKind::Gateway
                         && reason.is_none()
                         && !ctx.gateway_profile_fetched
                         && !config.allow_fallback
                     {
-                        reason = Some("尚未成功从网关拉取 Wi-Fi 信息".to_string());
+                        reason = Some(Message::new("wifi_source.reason.gateway_fetch_pending"));
                     }
                     reason
                 }
@@ -181,51 +192,49 @@ pub fn source_availability(
         .collect()
 }
 
-/// 解析出最终使用的 Wi-Fi 档案。
+/// Resolve the Wi-Fi profile to actually use.
 pub fn resolve(config: &WifiSourceConfig, ctx: &SourceContext) -> CoreResult<ResolvedWifi> {
-    // 1. 来源可用性（与 UI 同一套判定，防绕过）
+    // 1. Source availability (the same decision the UI uses, to prevent bypassing)
     let availability = source_availability(config, ctx);
-    let (_, enabled, reason) = availability
+    let (_, enabled, _) = availability
         .iter()
         .find(|(kind, _, _)| *kind == config.kind)
         .cloned()
         .ok_or_else(|| CoreError::SourceUnavailable {
             source_name: config.kind.as_str().to_string(),
-            reason: "未知来源".to_string(),
+            reason: Message::new("wifi_source.reason.unknown").to_string(),
         })?;
     if !enabled {
         return Err(CoreError::SourceUnavailable {
             source_name: config.kind.as_str().to_string(),
-            reason: reason.unwrap_or_else(|| "不可用".to_string()),
+            reason: Message::new("wifi_source.reason.unavailable").to_string(),
         });
     }
 
-    // 2. 产出档案
+    // 2. Build the profile
     let mut notes = Vec::new();
     let profile = match config.kind {
         WifiSourceKind::ControllerSelf => {
             let mut p = WifiProfile::template("radio0");
-            notes.push(
-                "来源：控制器自身的 Wi-Fi 信息（仅作为模板下发，不改控制器本机配置）".to_string(),
-            );
+            notes.push(Message::new("wifi_source.note.controller_self"));
             p.kvr.mobility_domain = default_mobility_domain();
             p
         }
         WifiSourceKind::Gateway => match (&ctx.gateway_profile, ctx.gateway_profile_fetched) {
             (Some(p), true) => {
-                notes.push("来源：网关的 Wi-Fi 信息（只读拉取，绝不写回网关）".to_string());
+                notes.push(Message::new("wifi_source.note.gateway"));
                 p.clone()
             }
             _ => {
                 return Err(CoreError::SourceUnavailable {
                     source_name: WifiSourceKind::Gateway.as_str().to_string(),
-                    reason: "拉取网关 Wi-Fi 信息失败".to_string(),
+                    reason: Message::new("wifi_source.reason.gateway_fetch_failed").to_string(),
                 })
             }
         },
         WifiSourceKind::Custom => {
             let custom = config.custom.clone().ok_or_else(|| {
-                CoreError::Invalid("选择自定义 Wi-Fi 信息但未提供参数".to_string())
+                CoreError::Invalid("custom Wi-Fi source selected without parameters".to_string())
             })?;
             let mut p = WifiProfile::template("radio0");
             p.ssid = custom.ssid;
@@ -235,21 +244,22 @@ pub fn resolve(config: &WifiSourceConfig, ctx: &SourceContext) -> CoreResult<Res
             p.channel = custom.channel;
             p.hidden = custom.hidden;
             p.kvr = custom.kvr;
-            notes.push("来源：用户自定义 Wi-Fi 信息".to_string());
+            notes.push(Message::new("wifi_source.note.custom"));
             p
         }
     };
 
-    // 3. 是否写回本机：只有本机承担 AP 才会被修改
+    // 3. Whether to write back locally: only a device that takes the AP role is modified
     let will_modify_local = ctx.local_is_ap;
     let requires_confirmation = will_modify_local && config.kind == WifiSourceKind::Custom;
 
     if requires_confirmation && !ctx.local_wifi_change_confirmed {
-        // 需求 5：自定义 + AP 与 Controller 同设备 ⇒ 该设备 Wi-Fi 要被改，必须显式确认
+        // Requirement 5: custom + AP and Controller on the same device ⇒ that device's Wi-Fi is
+        // modified, so explicit confirmation is required
         return Err(CoreError::LocalWifiChangeNotConfirmed);
     }
     if requires_confirmation {
-        notes.push("注意：本设备同时承担 AP，应用自定义 Wi-Fi 信息会修改本机无线配置".to_string());
+        notes.push(Message::new("wifi_source.note.local_wifi_modified"));
     }
 
     Ok(ResolvedWifi {
@@ -261,24 +271,21 @@ pub fn resolve(config: &WifiSourceConfig, ctx: &SourceContext) -> CoreResult<Res
     })
 }
 
-/// 生成 4 位十六进制漫游域（无外部依赖的简单实现，仅用于默认值）。
+/// Generate a 4-hex-digit mobility domain (a simple implementation with no external dependency,
+/// used only for the default).
 pub fn default_mobility_domain() -> String {
-    // 由调用方在真实环境下用随机数覆盖；这里给出稳定的合法值。
+    // Overridden by the caller with a random number in real environments; a stable valid value is
+    // given here.
     "abcd".to_string()
 }
 
-/// 便捷工具：给定能力判断是否可以开启 KVR。
-pub fn kvr_available(caps: &Capabilities) -> (bool, Option<String>) {
+/// Convenience helper: decide whether KVR can be enabled given the capabilities.
+pub fn kvr_available(caps: &Capabilities) -> (bool, Option<Message>) {
     if caps.radios.is_empty() {
-        return (false, Some("本设备没有无线模块".to_string()));
+        return (false, Some(Message::new("wifi_source.kvr.no_radio")));
     }
     if !caps.wpad_full {
-        return (
-            false,
-            Some(
-                "需要完整版 wpad（含 802.11k/v/r），请安装 `wpad` 而不是 `wpad-basic`".to_string(),
-            ),
-        );
+        return (false, Some(Message::new("wifi_source.kvr.wpad_basic")));
     }
     (true, None)
 }
@@ -349,7 +356,10 @@ mod tests {
             .find(|(k, _, _)| *k == WifiSourceKind::Gateway)
             .unwrap();
         assert!(!gateway.1);
-        assert!(gateway.2.as_deref().unwrap().contains("没有 Wi-Fi"));
+        assert_eq!(
+            gateway.2.as_ref().unwrap().key,
+            "wifi_source.reason.gateway_no_wifi"
+        );
         assert!(matches!(
             resolve(&config, &ctx),
             Err(CoreError::SourceUnavailable { .. })
@@ -370,7 +380,7 @@ mod tests {
             resolve(&config, &ctx),
             Err(CoreError::SourceUnavailable { .. })
         ));
-        // 但 UI 里 Custom 仍然可用
+        // but Custom is still available in the UI
         let availability = source_availability(&config, &ctx);
         let custom = availability
             .iter()
@@ -415,6 +425,6 @@ mod tests {
         };
         let (ok, reason) = kvr_available(&caps);
         assert!(!ok);
-        assert!(reason.unwrap().contains("wpad"));
+        assert!(reason.unwrap().key.contains("wpad"));
     }
 }

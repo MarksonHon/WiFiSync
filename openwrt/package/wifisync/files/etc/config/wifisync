@@ -1,38 +1,38 @@
-# WifiSync 自身配置（不含任何被管理的 network/wireless 设置）
+# WifiSync's own configuration (no managed network/wireless settings)
 #
-# 重要：本文件只描述"WifiSync 自己想做什么"。
-#   * Gateway 角色：只记录用户选定的 LAN 接口，不修改网络
-#   * Controller 角色：只做新 AP 准入与网络信息下发，不修改本机网络
-#   * AP 角色：才会应用下发的 Wi-Fi / 网桥信息（且必须已获准入）
+# Important: this file only describes "what WifiSync itself wants to do".
+#   * Gateway role: only records the user-selected LAN interfaces, never modifies the network
+#   * Controller role: only handles new AP admission and network info distribution, never modifies the local network
+#   * AP role: the only role that applies the distributed Wi-Fi / bridge info (and only when admitted)
 
 config wifisync 'main'
-	# 保存用户是否显式设置过角色。为 0 时，首次启动按硬件能力取默认值：
-	# 有无线 ⇒ "controller ap gateway"；无无线 ⇒ "controller gateway"（自动取消 AP）
+	# Tracks whether the user explicitly set the roles. When 0, the first start picks defaults from hardware capability:
+	# has wireless => "controller ap gateway"; no wireless => "controller gateway" (AP dropped automatically)
 	option roles_configured '0'
 	option roles 'controller ap gateway'
 	option device_id ''
 	option bridge_name 'br-lan'
-	# managed_only：只还原 WifiSync 改动过的键；full：按基线整体覆盖
+	# managed_only: restore only keys changed by WifiSync; full: overwrite everything from the baseline
 	option restore_mode 'managed_only'
-	# AP 的同步模式：auto（跟随 Controller 下发）/ local_override（本地临时覆盖）
+	# AP sync mode: auto (follow the Controller) / local_override (temporary local override)
 	option sync_mode 'auto'
 	option local_wifi_change_confirmed '0'
-	# Gateway 角色专用：用户选定的 LAN 接口（仅用于识别与探测）
+	# Gateway role only: user-selected LAN interfaces (identification and probing only)
 	list gateway_lan_ifaces ''
-	# 连通性探测目标（程序只做探测，不会修改路由/NAT/防火墙）
+	# Connectivity probe targets (the program only probes; it never changes routes/NAT/firewall)
 	option gateway_endpoint ''
 	option controller_endpoint ''
 
-# Wi-Fi 信息源：controller_self（控制器自身）/ gateway（只读拉取网关）/ custom（自定义）
+# Wi-Fi info source: controller_self (the controller itself) / gateway (read-only pull from the gateway) / custom
 config wifi_source 'source'
 	option kind 'controller_self'
 	option gateway_endpoint ''
 	option gateway_credential_ref ''
 	option allow_fallback '0'
 
-# 仅当 kind='custom' 时生效。
-# 注意：若本设备同时承担 AP 角色（AP 与 Controller 同设备），
-# 应用自定义信息会修改本机无线配置，需要用户显式确认（local_wifi_change_confirmed=1）。
+# Only takes effect when kind='custom'.
+# Note: if this device also acts as an AP (AP and Controller on the same device),
+# applying custom info modifies the local wireless config and requires explicit user confirmation (local_wifi_change_confirmed=1).
 config custom_wifi 'custom'
 	option ssid 'WifiSync'
 	option auth 'sae-mixed'
@@ -47,7 +47,7 @@ config custom_wifi 'custom'
 	option ft_over_ds '1'
 	option ft_psk_generate_local '1'
 
-# 可选：连不上 Controller / Gateway 时恢复设备默认网络（默认关闭）
+# Optional: restore the device's default network when the Controller / Gateway is unreachable (off by default)
 config failsafe 'failsafe'
 	option enabled '0'
 	option apply_confirm_secs '90'

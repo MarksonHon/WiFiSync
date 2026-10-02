@@ -1,8 +1,9 @@
 'use strict';
 'require rpc';
 
-// WifiSync 的 ubus 方法声明（对应 /usr/libexec/rpcd/wifisync 的方法表）。
-// 所有调用都走 ubus → rpcd → wifisync，不引入任何自定义协议。
+// WifiSync ubus method declarations (mirrors the method table of
+// /usr/libexec/rpcd/wifisync). All calls go through ubus -> rpcd -> wifisync,
+// no custom protocol is introduced.
 
 var callStatus = rpc.declare({ object: 'wifisync', method: 'status', expect: {} });
 var callCapabilities = rpc.declare({ object: 'wifisync', method: 'capabilities', expect: {} });
@@ -54,11 +55,139 @@ var callFailsafeSet = rpc.declare({
 var callVersion = rpc.declare({ object: 'wifisync', method: 'version', expect: {} });
 var callLogs = rpc.declare({ object: 'wifisync', method: 'logs_tail', params: [ 'lines' ], expect: {} });
 
-// ── 小工具 ────────────────────────────────────────────────────────────────
+// ── backend messages ─────────────────────────────────────────────────────
+//
+// The backend sends structured messages ({ key, params }) instead of finished
+// sentences. The keys are defined in crates/wifisync-core/src/message.rs and in
+// the daemon; both sides are compared by CI. Parameters are `%{name}`.
+
+var MESSAGES = {
+	'bridge.blocked': _('The current role combination creates no bridge and touches no port (%{blockers})'),
+
+	'plan.bridge_planned': _('Bridge plan: %{bridge}'),
+	'plan.kvr': _('KVR: k=%{k} v=%{v} r=%{r} mobility_domain=%{mobility_domain} ft_over_ds=%{ft_over_ds}'),
+	'plan.wifi_not_applied': _('This device does not take the AP role: the Wi-Fi information is only distributed to APs and does not change the local wireless configuration'),
+	'plan.profile_referenced': _('Referenced distributed profile %{profile}'),
+
+	'role.ap_removed_no_wifi': _('This device has no wireless module; the AP role was removed and the option is disabled'),
+
+	'failsafe.state.disabled': _('Disabled'),
+	'failsafe.state.not_applicable': _('Not applicable (not an AP device)'),
+	'failsafe.state.idle': _('Monitoring'),
+	'failsafe.state.pending_confirm': _('Waiting for apply confirmation'),
+	'failsafe.state.watchdog': _('Waiting for heartbeat recovery'),
+	'failsafe.state.tripped': _('Restore triggered'),
+
+	'wifi_source.reason.controller_no_wifi': _('The Controller itself has no Wi-Fi'),
+	'wifi_source.reason.gateway_no_wifi': _('The Gateway reports that it has no Wi-Fi'),
+	'wifi_source.reason.gateway_not_selected': _('No Gateway selected or connectivity not confirmed yet'),
+	'wifi_source.reason.gateway_fetch_pending': _('Wi-Fi information has not been fetched from the Gateway successfully yet'),
+	'wifi_source.reason.gateway_fetch_failed': _('Fetching the Wi-Fi information from the Gateway failed'),
+	'wifi_source.reason.unknown': _('Unknown source'),
+	'wifi_source.reason.unavailable': _('Unavailable'),
+	'wifi_source.note.controller_self': _('Source: the Controller\'s own Wi-Fi information (used as a template only, the local configuration of the Controller is not changed)'),
+	'wifi_source.note.gateway': _('Source: the Gateway\'s Wi-Fi information (read-only fetch, never written back to the Gateway)'),
+	'wifi_source.note.custom': _('Source: user-defined Wi-Fi information'),
+	'wifi_source.note.local_wifi_modified': _('Note: this device is also an AP, applying custom Wi-Fi information will modify its local wireless configuration'),
+	'wifi_source.kvr.no_radio': _('This device has no wireless module'),
+	'wifi_source.kvr.wpad_basic': _('The full wpad package (with 802.11k/v/r) is required: install `wpad` instead of `wpad-basic`'),
+
+	'backup.verify.ok': _('Backup integrity check passed'),
+	'backup.verify.failed': _('Backup check failed: %{missing} missing, %{changed} changed, %{extra} extra'),
+	'restore.blocked': _('Restore blocked: %{reason}'),
+	'restore.done': _('Restored %{restored} item(s), %{failed} failed'),
+
+	'daemon.apply.nothing_to_do': _('This role combination does not need to modify the network (0 changes)'),
+	'daemon.apply.applied': _('Applied %{count} change(s)'),
+	'daemon.gateway.recorded': _('The Gateway role does not modify any network configuration; the interfaces are only recorded for identification and probing'),
+	'daemon.backup.no_snapshot': _('No snapshot yet: start the service first (the initial baseline is created automatically) or create one with `wifisync backup create`'),
+
+	'probe.reachable': _('%{address} is reachable'),
+	'probe.unreachable_tcp': _('%{address} is unreachable (TCP connection failed)'),
+	'probe.unresolved': _('Cannot resolve %{address}: %{error}'),
+	'probe.icmp_raw': _('ICMP reply: %{output}')
+};
+
+// Blocker tokens emitted by the backend inside the `bridge.blocked` message.
+var BLOCKER_LABELS = {
+	gateway: _('Gateway'),
+	controller: _('Controller'),
+	no_ap: _('the AP role is not enabled'),
+	none: _('none')
+};
+
+// Parameter formatters for values needing more than plain interpolation.
+var PARAM_FORMATTERS = {
+	blockers: function(value) {
+		return String(value).split(',').map(function(token) {
+			return BLOCKER_LABELS[token] || token;
+		}).join(' / ');
+	}
+};
+
+/**
+ * Translates a backend message.
+ *
+ * Accepts a structured message ({ key, params }), a plain string or null.
+ * Plain strings that happen to be a known key are translated as well, so errors
+ * carrying a key are localized too; unknown strings pass through unchanged.
+ */
+function message(msg) {
+	if (msg == null)
+		return '';
+
+	if (typeof(msg) === 'string')
+		return (MESSAGES[msg] != null) ? MESSAGES[msg] : msg;
+
+	var template = MESSAGES[msg.key];
+
+	if (template == null)
+		return msg.key;
+
+	var params = msg.params || {};
+
+	return template.replace(/%\{(\w+)\}/g, function(match, name) {
+		if (!(name in params))
+			return match;
+
+		var formatter = PARAM_FORMATTERS[name];
+		var value = String(params[name]);
+
+		return formatter ? formatter(value) : value;
+	});
+}
+
+/**
+ * Renders a dry-run plan: translated notes followed by the language neutral uci
+ * commands produced by the backend.
+ */
+function planText(plan) {
+	plan = plan || {};
+
+	var notes = (plan.notes || []).map(message).filter(function(line) {
+		return line !== '';
+	}).map(function(line) {
+		return '# ' + line;
+	}).join('\n');
+
+	var commands = plan.text || '';
+
+	if (notes && commands)
+		return notes + '\n' + commands;
+
+	return notes || commands;
+}
+
+/** Turns an RPC rejection into translatable text. */
+function errorText(err) {
+	return message((err && err.message) ? err.message : err);
+}
+
+// ── shared widgets ───────────────────────────────────────────────────────
 
 function boolLabel(value) {
-	return value ? E('span', { 'class': 'label success' }, '是')
-	             : E('span', { 'class': 'label' }, '否');
+	return value ? E('span', { 'class': 'label success' }, _('Yes'))
+	             : E('span', { 'class': 'label' }, _('No'));
 }
 
 function roleChip(label) {
@@ -84,8 +213,8 @@ function notice(text, type) {
 	return E('div', { 'class': 'alert-message ' + (type || 'warning') }, text);
 }
 
-function errorBox(message) {
-	return message ? notice(message, 'error') : null;
+function errorBox(text) {
+	return text ? notice(text, 'error') : null;
 }
 
 function submit(label, handler) {
@@ -127,6 +256,9 @@ return {
 	callVersion: callVersion,
 	callLogs: callLogs,
 
+	message: message,
+	planText: planText,
+	errorText: errorText,
 	boolLabel: boolLabel,
 	roleChip: roleChip,
 	kv: kv,

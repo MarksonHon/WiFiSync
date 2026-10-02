@@ -1,6 +1,7 @@
-//! 恢复执行器（需求 11）。
+//! Restore executor (requirement 11).
 //!
-//! 只执行 `wifisync-core` 计算出来的 [`RestorePlan`]，本身不做任何策略判断。
+//! It only executes the [`RestorePlan`] computed by `wifisync-core`; it makes no policy
+//! decisions of its own.
 
 use crate::error::{SysError, SysResult};
 use crate::netifd;
@@ -13,6 +14,7 @@ use wifisync_core::backup::{
     build_restore_plan, ManagedEntry, RestoreAction, RestoreMode, RestorePlan, VerifyReport,
 };
 use wifisync_core::uci_file;
+use wifisync_core::Message;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreReport {
@@ -30,17 +32,27 @@ impl RestoreReport {
 
     pub fn summary(&self) -> String {
         if let Some(reason) = &self.blocked {
-            return format!("恢复被阻止：{}", reason);
+            return format!("restore blocked: {}", reason);
         }
         format!(
-            "已恢复 {} 项{}",
+            "restored {} item(s){}",
             self.applied.len(),
             if self.failed.is_empty() {
                 String::new()
             } else {
-                format!("，失败 {} 项", self.failed.len())
+                format!(", {} failed", self.failed.len())
             }
         )
+    }
+
+    /// UI message describing the restore result (translated by the front end).
+    pub fn summary_message(&self) -> Message {
+        if let Some(reason) = &self.blocked {
+            return Message::new("restore.blocked").param("reason", reason.clone());
+        }
+        Message::new("restore.done")
+            .param("restored", self.applied.len().to_string())
+            .param("failed", self.failed.len().to_string())
     }
 }
 
@@ -59,7 +71,7 @@ impl Restorer {
         SnapshotStore::new(self.paths.clone())
     }
 
-    /// 生成恢复计划（含完整性校验）。
+    /// Build a restore plan (including integrity verification).
     pub fn plan(&self, mode: RestoreMode, snapshot_dir: &Path) -> SysResult<RestorePlan> {
         let store = self.snapshot_store();
         let manifest = store.manifest(snapshot_dir)?;
@@ -74,7 +86,7 @@ impl Restorer {
         ))
     }
 
-    /// 收集「受管键的原值 / 当前值」对比。
+    /// Collect the "original value / current value" comparison for managed keys.
     pub fn managed_entries(
         &self,
         manifest: &BackupManifest,
@@ -89,12 +101,12 @@ impl Restorer {
                 continue;
             };
 
-            // 原值：来自快照里的配置文件文本
+            // Original value: from the snapshot's config file text
             let original = std::fs::read_to_string(snapshot_dir.join("config").join(&file))
                 .ok()
                 .and_then(|text| uci_file::get(&text, &section, &option));
 
-            // 当前值：优先 uci，退化为直接读文件
+            // Current value: prefer uci, fall back to reading the file directly
             let current = match self.uci.get(&format!("{}.{}.{}", file, section, option))? {
                 Some(value) => Some(value),
                 None => std::fs::read_to_string(self.paths.uci_file(&file))
@@ -111,7 +123,7 @@ impl Restorer {
         Ok(entries)
     }
 
-    /// 执行恢复计划。
+    /// Execute the restore plan.
     pub fn execute(&self, plan: &RestorePlan, snapshot_dir: &Path) -> SysResult<RestoreReport> {
         let mut report = RestoreReport {
             applied: Vec::new(),
@@ -171,7 +183,7 @@ impl Restorer {
             }
         }
 
-        // commit：文件级替换后也 commit 一次，保持 uci 状态一致
+        // commit: also commit once after file-level replacement to keep uci state consistent
         for file in &touched_files {
             if let Err(e) = crate::exec::run_ok("uci", &["commit", file]) {
                 report.failed.push(format!("commit {}: {}", file, e));
@@ -191,7 +203,7 @@ impl Restorer {
         Ok(report)
     }
 
-    /// 恢复完成后做一次只读校验。
+    /// Run a read-only verification after the restore completes.
     pub fn verify_after_restore(&self, snapshot_dir: &Path) -> SysResult<VerifyReport> {
         self.snapshot_store().verify(snapshot_dir)
     }
@@ -202,7 +214,7 @@ fn split3(key: &str) -> SysResult<(String, String, String)> {
         Some((file, section, Some(option))) => Ok((file, section, option)),
         _ => Err(SysError::Parse {
             what: "managed key".to_string(),
-            message: format!("`{}` 不是 file.section.option 形式", key),
+            message: format!("`{}` is not in file.section.option form", key),
         }),
     }
 }
@@ -229,11 +241,11 @@ mod tests {
             mode: RestoreMode::ManagedOnly,
             actions: vec![],
             skipped: vec![],
-            blocked: Some("校验失败".into()),
+            blocked: Some("verification failed".into()),
         };
         let report = restorer.execute(&plan, &dir).unwrap();
         assert!(!report.success());
-        assert!(report.summary().contains("校验失败"));
+        assert!(report.summary().contains("verification failed"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -27,10 +27,10 @@ return view.extend({
 		}
 
 		function setState(method, deviceId, label) {
-			if (!confirm(label + ' 设备 ' + deviceId + ' ？')) return;
+			if (!confirm(label + ' ' + deviceId + ' ?')) return;
 			method(deviceId).then(refresh).catch(function(err) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice(String(err.message || err), 'error'));
+				message.appendChild(ws.notice(ws.errorText(err), 'error'));
 			});
 		}
 
@@ -40,15 +40,15 @@ return view.extend({
 			var entries = admission.entries || [];
 			if (!entries.length) {
 				tableBody.appendChild(E('tr', {}, [
-					E('td', { 'colspan': 6, 'style': 'text-align:center' }, '暂无设备上报')
+					E('td', { 'colspan': 6, 'style': 'text-align:center' }, _('No device has reported yet'))
 				]));
 				return;
 			}
 			entries.forEach(function(entry) {
 				var stateLabel = {
-					pending: E('span', { 'class': 'label warning' }, '待批准'),
-					approved: E('span', { 'class': 'label success' }, '已批准'),
-					rejected: E('span', { 'class': 'label' }, '已拒绝')
+					pending: E('span', { 'class': 'label warning' }, _('Pending')),
+					approved: E('span', { 'class': 'label success' }, _('Approved')),
+					rejected: E('span', { 'class': 'label' }, _('Rejected'))
 				}[entry.state] || entry.state;
 
 				tableBody.appendChild(E('tr', {}, [
@@ -58,18 +58,18 @@ return view.extend({
 					E('td', {}, entry.source_addr || '-'),
 					E('td', {}, stateLabel),
 					E('td', {}, [
-						ws.submit('批准', function() { setState(ws.callAdmissionApprove, entry.device_id, '批准'); }),
+						ws.submit(_('Approve'), function() { setState(ws.callAdmissionApprove, entry.device_id, _('Approve device')); }),
 						' ',
-						ws.submit('拒绝', function() { setState(ws.callAdmissionReject, entry.device_id, '拒绝'); }),
+						ws.submit(_('Reject'), function() { setState(ws.callAdmissionReject, entry.device_id, _('Reject device')); }),
 						' ',
-						ws.submit('撤销', function() { setState(ws.callAdmissionRevoke, entry.device_id, '撤销批准'); })
+						ws.submit(_('Revoke'), function() { setState(ws.callAdmissionRevoke, entry.device_id, _('Revoke approval of device')); })
 					])
 				]));
 			});
 		}
 		renderTable();
 
-		// ── Wi-Fi 信息源 ────────────────────────────────────────────────────
+		// ── Wi-Fi information sources ───────────────────────────────────────
 		var availability = {};
 		(source.availability || []).forEach(function(item) { availability[item.kind] = item; });
 		var currentKind = (source.config && source.config.kind) || 'controller_self';
@@ -96,9 +96,9 @@ return view.extend({
 		});
 
 		var sourceLabels = {
-			controller_self: '控制器自身的 Wi-Fi 信息',
-			gateway: '网关的 Wi-Fi 信息（只读拉取）',
-			custom: '自定义信息'
+			controller_self: _('Wi-Fi information of the Controller itself'),
+			gateway: _('Wi-Fi information of the Gateway (read-only fetch)'),
+			custom: _('Custom information')
 		};
 
 		var sourceRows = Object.keys(sourceLabels).map(function(kind) {
@@ -107,9 +107,9 @@ return view.extend({
 				E('label', { 'class': 'cbi-value-title' }, E('span', {}, [ radios[kind], ' ', sourceLabels[kind] ])),
 				E('div', { 'class': 'cbi-value-field' }, info.enabled
 					? E('span', {}, kind === 'custom'
-						? '始终可用（若本设备同时承担 AP，会修改本机无线配置，需勾选下方确认）'
-						: '可用')
-					: E('span', { 'class': 'label warning' }, info.reason || '不可用'))
+						? _('Always available (if this device is also an AP, its own wireless configuration is modified and the confirmation below is required)')
+						: _('Available'))
+					: E('span', { 'class': 'label warning' }, ws.message(info.reason) || _('Unavailable')))
 			]);
 		});
 
@@ -119,7 +119,7 @@ return view.extend({
 			})[0];
 			if (!kind) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice('请选择一个可用的 Wi-Fi 信息源', 'error'));
+				message.appendChild(ws.notice(_('Please select an available Wi-Fi information source'), 'error'));
 				return;
 			}
 			return ws.callWifiSourceSet(
@@ -136,49 +136,49 @@ return view.extend({
 				}
 			).then(function(result) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice('Wi-Fi 信息源已保存' +
-					(result.requires_confirmation ? '（仍需确认后才能应用到本机）' : ''), 'success'));
+				message.appendChild(ws.notice(_('Wi-Fi information source saved') +
+					(result.requires_confirmation ? ' ' + _('(it still has to be confirmed before being applied locally)') : ''), 'success'));
 			}).catch(function(err) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice(String(err.message || err), 'error'));
+				message.appendChild(ws.notice(ws.errorText(err), 'error'));
 			});
 		}
 
 		return E('div', {}, [
-			!isController ? ws.notice('本设备未承担 Controller 角色：准入与下发不可用。', 'warning') : null,
+			!isController ? ws.notice(_('This device does not take the Controller role: admission and distribution are unavailable.'), 'warning') : null,
 
-			ws.card('新 AP 准入', [
+			ws.card(_('New AP admission'), [
 				E('table', { 'class': 'table' }, [
 					E('thead', {}, E('tr', {}, [
-						E('th', {}, '设备 ID'), E('th', {}, 'MAC'), E('th', {}, '主机名'),
-						E('th', {}, '来源'), E('th', {}, '状态'), E('th', {}, '操作')
+						E('th', {}, _('Device ID')), E('th', {}, _('MAC')), E('th', {}, _('Hostname')),
+						E('th', {}, _('Source')), E('th', {}, _('State')), E('th', {}, _('Actions'))
 					])),
 					tableBody
 				]),
 				E('div', { 'class': 'cbi-section-descr' },
-					'未通过准入的 AP 不会被下发任何信息，也不会写入本机配置（服务端双重校验）。')
+					_('An AP that has not passed admission receives no information and writes no local configuration (validated twice on the service side).'))
 			].filter(Boolean)),
 
-			ws.card('Wi-Fi 信息源', sourceRows.concat([
-				ws.kv('网关地址', endpoint),
-				ws.notice('若网关上报"没有 Wi-Fi"，该来源会被禁用；控制器自身没有 Wi-Fi 时同理。', 'info'),
-				E('h4', {}, '自定义信息（仅 kind = custom 时生效）'),
+			ws.card(_('Wi-Fi information source'), sourceRows.concat([
+				ws.kv(_('Gateway address'), endpoint),
+				ws.notice(_('If the Gateway reports "no Wi-Fi", that source is disabled; the same applies when the Controller itself has no Wi-Fi.'), 'info'),
+				E('h4', {}, _('Custom information (only effective when kind = custom)')),
 				ws.kv('SSID', ssid),
-				ws.kv('加密方式', auth),
-				ws.kv('密钥引用', pskRef),
-				ws.kv('频段', band),
+				ws.kv(_('Encryption'), auth),
+				ws.kv(_('Key reference'), pskRef),
+				ws.kv(_('Band'), band),
 				ws.kv('mobility_domain', domain),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' },
-						E('span', {}, [ confirmLocal, ' 确认可以修改本机无线配置' ])),
+						E('span', {}, [ confirmLocal, ' ', _('Confirm that the local wireless configuration may be modified') ])),
 					E('div', { 'class': 'cbi-value-field' },
-						'当「AP 与 Controller 是同一台设备」且选择自定义信息时，本机 Wi-Fi 也会被修改，必须显式确认。')
+						_('When the AP and the Controller are the same device and custom information is selected, the local Wi-Fi is modified as well, which must be confirmed explicitly.'))
 				]),
 				E('div', { 'class': 'cbi-value' }, [
-					E('div', { 'class': 'cbi-value-field' }, [ ws.submit('保存 Wi-Fi 信息源', saveSource) ])
+					E('div', { 'class': 'cbi-value-field' }, [ ws.submit(_('Save Wi-Fi information source'), saveSource) ])
 				]),
 				message
-			]), 'Controller 只把这些信息下发给已准入的 AP；选择「控制器自身」时不会改写控制器本机配置。')
+			]), _('The Controller only distributes this information to admitted APs; choosing "the Controller itself" never rewrites the local configuration of the Controller.'))
 		].filter(Boolean));
 	},
 

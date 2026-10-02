@@ -1,8 +1,8 @@
-//! `wifisync` 自身配置模型（`/etc/config/wifisync`）。
+//! Configuration model for `wifisync` itself (`/etc/config/wifisync`).
 //!
-//! 与 uci 的映射逻辑是**纯函数**：`from_sections` 从解析结果构造，
-//! `to_uci_ops` 产出写入操作。这样 uci 相关的判断可以在宿主机完整单测，
-//! 系统层只负责把命令跑起来。
+//! The mapping to/from uci is **pure functions**: `from_sections` builds from parsed sections,
+//! `to_uci_ops` produces write operations. This way all uci-related decisions can be fully
+//! unit-tested on a host, and the system layer only has to run the commands.
 
 use crate::admission::AdmissionRegistry;
 use crate::backup::RestoreMode;
@@ -26,20 +26,23 @@ pub const SECTION_FAILSAFE: &str = "failsafe";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifisyncConfig {
     pub device_id: String,
-    /// 用户是否显式设置过角色；未设置时首次启动按硬件能力取默认值
-    /// （需求 3：无无线设备的默认设置里取消 AP 角色）。
+    /// Whether the user explicitly configured roles; if not, the first start derives defaults from
+    /// the hardware (requirement 3: drop the AP role from the defaults on devices without
+    /// wireless).
     pub roles_configured: bool,
     pub roles: Roles,
-    /// 默认网桥名；结构上支持多网桥，这里是缺省名。
+    /// Default bridge name; multiple bridges are structurally supported, and this is the default
+    /// name.
     pub bridge_name: String,
     pub restore_mode: RestoreMode,
     pub sync_mode: SyncMode,
-    /// Gateway 角色由用户选定的 LAN 接口（**只记录，不修改**）。
+    /// LAN interfaces chosen by the user for the Gateway role (**recorded only, never modified**).
     pub gateway_lan_ifaces: Vec<String>,
-    /// 连通性探测目标（Controller 与 Gateway 是否互通由用户显式确认）。
+    /// Connectivity probe target (the user explicitly confirms whether Controller and Gateway can
+    /// reach each other).
     pub gateway_endpoint: Option<String>,
     pub controller_endpoint: Option<String>,
-    /// 用户是否已确认「可以修改本机无线配置」。
+    /// Whether the user has confirmed that "the local wireless configuration may be modified".
     pub local_wifi_change_confirmed: bool,
     pub wifi_source: WifiSourceConfig,
     pub failsafe: FailsafeConfig,
@@ -104,10 +107,11 @@ fn opt_list(sections: &[UciSection], section_name: &str, option: &str) -> Vec<St
 }
 
 impl WifisyncConfig {
-    /// 宽容解析：任何缺失项都退回默认值，绝不因为配置不完整而拒绝启动。
+    /// Lenient parsing: any missing item falls back to its default; startup is never refused
+    /// because the configuration is incomplete.
     ///
-    /// 这里逐项赋值而不是用 `..Default::default()`，因为需要按 section 分块阅读；
-    /// 语义与 clippy 建议的写法完全等价。
+    /// Assigning field by field instead of `..Default::default()` keeps the code readable section
+    /// by section; the semantics are exactly equivalent to what clippy suggests.
     #[allow(clippy::field_reassign_with_default)]
     pub fn from_sections(sections: &[UciSection]) -> Self {
         let mut cfg = Self::default();
@@ -143,7 +147,7 @@ impl WifisyncConfig {
         cfg.local_wifi_change_confirmed =
             opt_bool(sections, SECTION_MAIN, "local_wifi_change_confirmed", false);
 
-        // Wi-Fi 信息源
+        // Wi-Fi information source
         let mut source = WifiSourceConfig::default();
         if let Some(kind) = opt(sections, SECTION_SOURCE, "kind") {
             if let Some(parsed) = WifiSourceKind::from_str_opt(&kind) {
@@ -182,7 +186,7 @@ impl WifisyncConfig {
         }
         cfg.wifi_source = source;
 
-        // 故障恢复
+        // Failover
         let mut failsafe = FailsafeConfig::default();
         failsafe.enabled = opt_bool(sections, SECTION_FAILSAFE, "enabled", false);
         failsafe.apply_confirm_secs = opt_u64(sections, SECTION_FAILSAFE, "apply_confirm_secs", 90);
@@ -203,7 +207,8 @@ impl WifisyncConfig {
         cfg
     }
 
-    /// 产出「把当前配置完整写回 uci」的操作序列（幂等）。
+    /// Produce the operation sequence that writes the current configuration fully back to uci
+    /// (idempotent).
     pub fn to_uci_ops(&self) -> Vec<UciOp> {
         let mut ops = Vec::new();
         let ensure = |ops: &mut Vec<UciOp>, name: &str, kind: &str| {
@@ -429,13 +434,15 @@ impl WifisyncConfig {
         ops
     }
 
-    /// 应用前的完整校验。
+    /// Full validation before applying.
     pub fn validate(&self, caps: &Capabilities) -> CoreResult<()> {
         self.roles.validate(caps)?;
         if let Some(custom) = &self.wifi_source.custom {
             custom.kvr.validate().map_err(crate::CoreError::Invalid)?;
             if custom.ssid.trim().is_empty() {
-                return Err(crate::CoreError::Invalid("自定义 SSID 不能为空".into()));
+                return Err(crate::CoreError::Invalid(
+                    "custom SSID must not be empty".into(),
+                ));
             }
         }
         if self.wifi_source.kind == WifiSourceKind::Gateway
@@ -447,18 +454,18 @@ impl WifisyncConfig {
                 .is_empty()
         {
             return Err(crate::CoreError::Invalid(
-                "选择网关作为 Wi-Fi 信息源时必须填写网关地址".into(),
+                "a Gateway address is required when the Gateway is used as Wi-Fi source".into(),
             ));
         }
         if self.failsafe.enabled && self.failsafe.link_timeout_secs < 30 {
             return Err(crate::CoreError::Invalid(
-                "故障恢复超时时间过短（<30 秒），可能导致误触发".into(),
+                "failover timeout is too short (<30 s) and may trigger accidentally".into(),
             ));
         }
         Ok(())
     }
 
-    /// 追加运行时状态（准入登记簿）后的持久化视图。
+    /// Persisted view after appending runtime state (the admission registry).
     pub fn to_state_json(
         &self,
         admissions: &AdmissionRegistry,
@@ -555,7 +562,7 @@ config failsafe 'failsafe'
         let no_wifi = Capabilities::default();
         assert!(
             !Roles::default_for(&no_wifi).ap,
-            "无无线设备默认不得勾选 AP"
+            "the AP role must not be enabled by default without wireless"
         );
         let with_wifi = caps_with_radio();
         assert!(Roles::default_for(&with_wifi).ap);
@@ -565,7 +572,10 @@ config failsafe 'failsafe'
     fn missing_config_falls_back_to_defaults() {
         let cfg = WifisyncConfig::from_sections(&[]);
         assert_eq!(cfg.bridge_name, "br-lan");
-        assert!(!cfg.failsafe.enabled, "故障恢复默认必须关闭");
+        assert!(
+            !cfg.failsafe.enabled,
+            "failover must be disabled by default"
+        );
         assert_eq!(cfg.restore_mode, RestoreMode::ManagedOnly);
         assert_eq!(cfg.wifi_source.kind, WifiSourceKind::ControllerSelf);
     }
@@ -578,12 +588,12 @@ config failsafe 'failsafe'
         assert!(ops
             .iter()
             .any(|op| op.key() == "wifisync.custom.mobility_domain"));
-        // 每个键只写一次
+        // Each key is written only once
         let mut keys: Vec<String> = ops.iter().map(|op| op.key()).collect();
         let before = keys.len();
         keys.sort();
         keys.dedup();
-        assert_eq!(before, keys.len(), "同一键不应重复写入");
+        assert_eq!(before, keys.len(), "the same key must not be written twice");
     }
 
     #[test]

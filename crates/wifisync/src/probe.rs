@@ -1,9 +1,11 @@
-//! 只读连通性探测（需求 8：Controller 与 Gateway 是否连通由用户显式确认，
-//! 程序只做探测，绝不修改路由 / NAT / 防火墙）。
+//! Read-only connectivity probing (requirement 8: whether the Controller and the Gateway are
+//! connected is confirmed explicitly by the user; the program only probes, and never modifies
+//! routing / NAT / firewall).
 
 use serde_json::{json, Value};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
+use wifisync_core::Message;
 use wifisync_sys::exec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,7 +13,8 @@ pub struct ProbeResult {
     pub reachable: bool,
     pub method: String,
     pub latency_ms: Option<u128>,
-    pub detail: String,
+    /// UI message (translated by the front end).
+    pub detail: Message,
 }
 
 impl ProbeResult {
@@ -25,7 +28,7 @@ impl ProbeResult {
     }
 }
 
-/// 解析 `host`、`host:port`、`[v6]:port` 形式的目标。
+/// Parse a target of the form `host`, `host:port` or `[v6]:port`.
 fn split_target(target: &str) -> (String, u16) {
     if let Some(stripped) = target.strip_prefix('[') {
         if let Some((host, rest)) = stripped.split_once(']') {
@@ -44,7 +47,7 @@ fn split_target(target: &str) -> (String, u16) {
     }
 }
 
-/// TCP 连接探测（ICMP 需要 raw socket 权限，这里统一用 TCP）。
+/// TCP connectivity probe (ICMP needs raw socket privileges, so TCP is used uniformly here).
 pub fn tcp_probe(target: &str) -> ProbeResult {
     let (host, port) = split_target(target);
     let address = format!("{}:{}", host, port);
@@ -55,7 +58,9 @@ pub fn tcp_probe(target: &str) -> ProbeResult {
                 reachable: false,
                 method: "tcp".into(),
                 latency_ms: None,
-                detail: format!("无法解析 {}: {}", address, e),
+                detail: Message::new("probe.unresolved")
+                    .param("address", address)
+                    .param("error", e.to_string()),
             }
         }
     };
@@ -67,7 +72,7 @@ pub fn tcp_probe(target: &str) -> ProbeResult {
                 reachable: true,
                 method: "tcp".into(),
                 latency_ms: Some(start.elapsed().as_millis()),
-                detail: format!("{} 可达", addr),
+                detail: Message::new("probe.reachable").param("address", addr.to_string()),
             };
         }
     }
@@ -75,11 +80,11 @@ pub fn tcp_probe(target: &str) -> ProbeResult {
         reachable: false,
         method: "tcp".into(),
         latency_ms: None,
-        detail: format!("{} 不可达（TCP 连接失败）", address),
+        detail: Message::new("probe.unreachable_tcp").param("address", address),
     }
 }
 
-/// 可选的 ICMP 探测（`ping` 存在时）。
+/// Optional ICMP probe (when `ping` is available).
 pub fn ping_once(target: &str) -> Option<ProbeResult> {
     let (host, _) = split_target(target);
     if !exec::has("ping") {
@@ -95,11 +100,14 @@ pub fn ping_once(target: &str) -> Option<ProbeResult> {
         } else {
             None
         },
-        detail: out.stdout.lines().next().unwrap_or_default().to_string(),
+        detail: Message::new("probe.icmp_raw").param(
+            "output",
+            out.stdout.lines().next().unwrap_or_default().to_string(),
+        ),
     })
 }
 
-/// 综合探测：先 ICMP（若可用），再 TCP。
+/// Combined probe: ICMP first (if available), then TCP.
 pub fn probe(target: &str) -> ProbeResult {
     if let Some(result) = ping_once(target) {
         if result.reachable {
@@ -126,7 +134,7 @@ mod tests {
 
     #[test]
     fn unroutable_target_is_unreachable() {
-        // 192.0.2.0/24 是 TEST-NET-1，正常环境不可达
+        // 192.0.2.0/24 is TEST-NET-1, unreachable in a normal environment
         let result = tcp_probe("192.0.2.1:9");
         assert!(!result.reachable);
     }

@@ -2,25 +2,27 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SysError {
-    #[error("I/O 错误: {0}")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("JSON 错误: {0}")]
+    #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("执行 `{program}` 失败: {message}")]
+    #[error("Running `{program}` failed: {message}")]
     Command { program: String, message: String },
 
-    #[error("找不到可执行文件 `{0}`")]
+    #[error("Executable `{0}` not found")]
     MissingProgram(String),
 
-    #[error("解析 `{what}` 失败: {message}")]
+    #[error("Failed to parse `{what}`: {message}")]
     Parse { what: String, message: String },
 
-    #[error("找不到初始基线备份（{0}）：拒绝写入，请先成功建立基线")]
+    #[error(
+        "Initial baseline backup not found ({0}): refusing to write, create the baseline first"
+    )]
     BaseLineMissing(String),
 
-    #[error("core 错误: {0}")]
+    #[error("core error: {0}")]
     Core(#[from] wifisync_core::CoreError),
 }
 

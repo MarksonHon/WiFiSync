@@ -1,6 +1,6 @@
-//! 极简日志：写到 stderr（由 procd/logd 收进 syslog，`logread` 可读）。
+//! Minimal logging: writes to stderr (collected into syslog by procd/logd, readable via `logread`).
 //!
-//! 不引入日志框架，保持二进制体积可控。
+//! No logging framework is pulled in, to keep the binary size under control.
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +19,7 @@ fn timestamp() -> String {
     format_epoch(secs as i64)
 }
 
-/// 把 epoch 秒格式化成 `YYYY-MM-DDTHH:MM:SSZ`（不依赖 chrono）。
+/// Format epoch seconds as `YYYY-MM-DDTHH:MM:SSZ` (without depending on chrono).
 pub fn format_epoch(epoch: i64) -> String {
     let days = epoch.div_euclid(86_400);
     let secs_of_day = epoch.rem_euclid(86_400);
@@ -35,7 +35,7 @@ pub fn format_epoch(epoch: i64) -> String {
     )
 }
 
-/// 由天数计算儒略历日期（Howard Hinnant 的算法）。
+/// Compute the calendar date from the day count (Howard Hinnant's algorithm).
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

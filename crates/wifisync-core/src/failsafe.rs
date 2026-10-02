@@ -1,39 +1,43 @@
-//! 故障恢复状态机（需求 6 / 11）。
+//! Failover state machine (requirement 6 / 11).
 //!
-//! 两级护栏，都是纯状态机，时间由调用方注入：
+//! Two levels of guard rails, both pure state machines, with time injected by the caller:
 //!
-//! * **L1 apply-guard**：应用配置后必须在 `apply_confirm_secs` 内确认，否则自动回滚；
-//! * **L2 link-watchdog**：**仅 AP 设备**，与 Controller/Gateway 心跳丢失超过
-//!   `link_timeout_secs` 就按 `action` 恢复设备默认网络（可选重启）。
+//! * **L1 apply-guard**: after applying a configuration it must be confirmed within
+//!   `apply_confirm_secs`, otherwise it rolls back automatically;
+//! * **L2 link-watchdog**: **AP devices only**; if the heartbeat with the Controller/Gateway is
+//!   lost for more than `link_timeout_secs`, restore the device default network according to
+//!   `action` (optionally rebooting).
 //!
-//! Gateway / Controller 不参与（零侵入），因此 [`Failsafe::for_roles`] 会把非 AP 设备
-//! 直接置为「不适用」。
+//! Gateway / Controller do not participate (zero intrusion), so [`Failsafe::for_roles`] marks
+//! non-AP devices as "not applicable" right away.
 
+use crate::message::Message;
 use crate::role::Roles;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailsafeAction {
-    /// 恢复设备默认网络配置。
+    /// Restore the device default network configuration.
     #[default]
     Revert,
-    /// 恢复默认网络后重启。
+    /// Restore the default network, then reboot.
     Reboot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailsafeConfig {
-    /// 需求 6 明确为“可选设置”，默认关闭。
+    /// Requirement 6 calls this an "optional setting"; it is off by default.
     pub enabled: bool,
-    /// apply-guard 确认窗口。
+    /// apply-guard confirmation window.
     pub apply_confirm_secs: u64,
-    /// 心跳丢失多久后触发恢复。
+    /// How long the heartbeat may be lost before recovery triggers.
     pub link_timeout_secs: u64,
     pub action: FailsafeAction,
-    /// 恢复默认网络时保留当前 SSID（避免邻居设备彻底失联）。
+    /// Keep the current SSID when restoring the default network (so neighbouring devices do not
+    /// lose all contact).
     pub keep_ssid: bool,
-    /// 心跳端点（Controller 或 Gateway 地址）。
+    /// Heartbeat endpoint (Controller or Gateway address).
     pub heartbeat_endpoint: Option<String>,
 }
 
@@ -52,9 +56,9 @@ impl Default for FailsafeConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailsafeEvent {
-    /// 即将应用一份新的网络配置（武装死手定时器）。
+    /// A new network configuration is about to be applied (arm the dead-man timer).
     ApplyStarted,
-    /// 用户/上层确认应用成功。
+    /// The user/upper layer confirms the apply succeeded.
     Confirmed,
     HeartbeatOk,
     HeartbeatLost,
@@ -63,20 +67,20 @@ pub enum FailsafeEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum FailsafeState {
-    /// 功能关闭。
+    /// Feature is off.
     Disabled,
-    /// 本设备不适用（非 AP）。
+    /// Not applicable to this device (not an AP).
     NotApplicable,
     Idle,
-    /// apply-guard 等待确认。
+    /// apply-guard is waiting for confirmation.
     PendingConfirm {
         since: crate::Timestamp,
     },
-    /// 等待心跳恢复。
+    /// Waiting for the heartbeat to recover.
     Watchdog {
         since: crate::Timestamp,
     },
-    /// 已触发（本次运行内只触发一次）。
+    /// Tripped (fires only once per run).
     Tripped {
         at: crate::Timestamp,
         reason: String,
@@ -84,26 +88,27 @@ pub enum FailsafeState {
 }
 
 impl FailsafeState {
-    pub fn label(&self) -> &'static str {
+    /// UI message describing this state.
+    pub fn label(&self) -> Message {
         match self {
-            FailsafeState::Disabled => "已关闭",
-            FailsafeState::NotApplicable => "不适用（非 AP 设备）",
-            FailsafeState::Idle => "监控中",
-            FailsafeState::PendingConfirm { .. } => "等待应用确认",
-            FailsafeState::Watchdog { .. } => "等待心跳恢复",
-            FailsafeState::Tripped { .. } => "已触发恢复",
+            FailsafeState::Disabled => Message::new("failsafe.state.disabled"),
+            FailsafeState::NotApplicable => Message::new("failsafe.state.not_applicable"),
+            FailsafeState::Idle => Message::new("failsafe.state.idle"),
+            FailsafeState::PendingConfirm { .. } => Message::new("failsafe.state.pending_confirm"),
+            FailsafeState::Watchdog { .. } => Message::new("failsafe.state.watchdog"),
+            FailsafeState::Tripped { .. } => Message::new("failsafe.state.tripped"),
         }
     }
 }
 
-/// 状态机给出的决定。
+/// The decision produced by the state machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decision {
     pub action: FailsafeAction,
     pub reason: String,
-    /// 由状态机产生的决定是否要求保留 SSID。
+    /// Whether the decision produced by the state machine requires keeping the SSID.
     pub keep_ssid: bool,
-    /// 触发后是否重启。
+    /// Whether to reboot after tripping.
     pub reboot: bool,
 }
 
@@ -114,7 +119,8 @@ pub struct Failsafe {
 }
 
 impl Failsafe {
-    /// 按配置创建；`applies=false`（非 AP）时状态为 [`FailsafeState::NotApplicable`]。
+    /// Create from config; when `applies=false` (not an AP) the state is
+    /// [`FailsafeState::NotApplicable`].
     pub fn new(config: FailsafeConfig, applies: bool) -> Self {
         let state = if !applies {
             FailsafeState::NotApplicable
@@ -130,7 +136,7 @@ impl Failsafe {
         }
     }
 
-    /// 便捷构造：只有 AP 角色才适用。
+    /// Convenience constructor: applicable only to the AP role.
     pub fn for_roles(config: FailsafeConfig, roles: &Roles) -> Self {
         Self::new(config, roles.ap)
     }
@@ -170,7 +176,7 @@ impl Failsafe {
             return None;
         }
         if let FailsafeState::Tripped { .. } = self.state {
-            // 已触发，本次运行不再重复触发
+            // Already tripped; do not fire again during this run
             return None;
         }
         match event {
@@ -198,7 +204,7 @@ impl Failsafe {
         }
     }
 
-    /// 定时驱动；返回需要执行的动作。
+    /// Tick driver; returns the action to execute.
     pub fn tick(&mut self, now: crate::Timestamp) -> Option<Decision> {
         if !self.is_active() {
             return None;
@@ -208,7 +214,7 @@ impl Failsafe {
                 let elapsed = now.saturating_sub(since).max(0) as u64;
                 if elapsed >= self.config.apply_confirm_secs {
                     let reason = format!(
-                        "配置应用后在 {} 秒内未确认，自动回滚到应用前快照",
+                        "not confirmed within {} s after applying the configuration; rolling back to the pre-apply snapshot",
                         self.config.apply_confirm_secs
                     );
                     self.state = FailsafeState::Tripped {
@@ -228,7 +234,7 @@ impl Failsafe {
                 let elapsed = now.saturating_sub(since).max(0) as u64;
                 if elapsed >= self.config.link_timeout_secs {
                     let reason = format!(
-                        "与 Controller/Gateway 的心跳丢失超过 {} 秒，恢复设备默认网络",
+                        "heartbeat with the Controller/Gateway lost for more than {} s; restoring the default network",
                         self.config.link_timeout_secs
                     );
                     self.state = FailsafeState::Tripped {
@@ -280,12 +286,15 @@ mod tests {
     fn apply_guard_trips_when_not_confirmed() {
         let mut fs = Failsafe::new(enabled(), true);
         assert!(fs.on_event(FailsafeEvent::ApplyStarted, 1_000).is_none());
-        assert!(fs.tick(1_020).is_none(), "未到确认窗口不应触发");
+        assert!(
+            fs.tick(1_020).is_none(),
+            "must not trigger before the confirmation window elapsed"
+        );
         let decision = fs.tick(1_031).unwrap();
         assert_eq!(decision.action, FailsafeAction::Revert);
         assert!(!decision.reboot);
-        assert!(decision.reason.contains("未确认"));
-        // 只触发一次
+        assert!(decision.reason.contains("not confirmed"));
+        // Fires only once
         assert!(fs.tick(2_000).is_none());
     }
 
@@ -305,7 +314,7 @@ mod tests {
         assert_eq!(fs.tick(600), None);
         let decision = fs.tick(620).unwrap();
         assert_eq!(decision.action, FailsafeAction::Revert);
-        assert!(decision.reason.contains("心跳丢失"));
+        assert!(decision.reason.contains("heartbeat"));
     }
 
     #[test]

@@ -1,11 +1,11 @@
-//! WifiSync 可执行程序。
+//! The WifiSync executable.
 //!
-//! 一个二进制三种模式：
+//! One binary with three modes:
 //!
 //! ```text
-//! wifisync daemon                  # 常驻服务（procd 拉起）
-//! wifisync status|plan|apply|...   # 命令行
-//! wifisync ubus list|call <m>      # rpcd exec 插件（LuCI 用）
+//! wifisync daemon                  # resident service (started by procd)
+//! wifisync status|plan|apply|...   # command line
+//! wifisync ubus list|call <m>      # rpcd exec plugin (used by LuCI)
 //! ```
 
 mod ctl;
@@ -24,27 +24,27 @@ use std::sync::Arc;
 use wifisync_sys::Paths;
 
 const USAGE: &str = "\
-wifisync — OpenWrt 家庭局域网组网工具
+wifisync — home LAN (wired + wireless) networking tool for OpenWrt
 
-用法:
+usage:
   wifisync daemon [--no-restore-on-stop] [--json-log]
   wifisync status
-  wifisync plan                      # dry-run：打印将要执行的改动
-  wifisync apply                     # 应用（仅纯 AP 角色会产生改动）
-  wifisync confirm                   # 确认应用成功（解除 apply-guard）
-  wifisync revert                    # 回滚最近一次写入
+  wifisync plan                      # dry-run: print the changes that would be applied
+  wifisync apply                     # apply (only a pure AP role produces changes)
+  wifisync confirm                   # confirm a successful apply (releases apply-guard)
+  wifisync revert                    # revert the most recent write
   wifisync backup [list|create|verify|prune]
   wifisync restore [--full] [--snapshot initial|<path>]
   wifisync admit list|approve|reject|revoke [device_id]
   wifisync roles [controller ap gateway]
-  wifisync probe <host[:port]>       # 只读连通性探测
-  wifisync ubus list|call <method>   # rpcd 插件模式
+  wifisync probe <host[:port]>       # read-only connectivity probe
+  wifisync ubus list|call <method>   # rpcd plugin mode
   wifisync version
 
-说明:
-  * Gateway / Controller 角色不会修改任何网络配置；
-  * 只有「纯 AP」设备（有 AP 且无 Controller、无 Gateway）才会把所有网口并入 br-lan；
-  * 服务启动前会保存初始化网络基线，停止前会恢复原有网络。
+notes:
+  * the Gateway / Controller roles never modify any network configuration;
+  * only a \"pure AP\" device (AP without Controller and Gateway) merges all ports into br-lan;
+  * the initial network baseline is saved before the service starts and restored before it stops.
 ";
 
 fn main() {
@@ -98,7 +98,7 @@ fn dispatch(args: &[String]) -> Result<i32, String> {
                         snapshot = args.get(index).cloned();
                     }
                     other if !other.starts_with("--") => snapshot = Some(other.to_string()),
-                    other => return Err(format!("未知选项 `{}`", other)),
+                    other => return Err(format!("unknown option `{}`", other)),
                 }
                 index += 1;
             }
@@ -113,11 +113,11 @@ fn dispatch(args: &[String]) -> Result<i32, String> {
         "probe" => {
             let target = args
                 .get(1)
-                .ok_or_else(|| "用法: wifisync probe <host[:port]>".to_string())?;
+                .ok_or_else(|| "usage: wifisync probe <host[:port]>".to_string())?;
             print(&ctl::probe(&paths, target)?)
         }
         "ubus" => ubus::run(&paths, &args[1..]),
-        other => Err(format!("未知命令 `{}`\n\n{}", other, USAGE)),
+        other => Err(format!("unknown command `{}`\n\n{}", other, USAGE)),
     }
 }
 
@@ -137,18 +137,19 @@ fn run_daemon(paths: &Paths, flags: &[String]) -> Result<i32, String> {
                 log::set_json_mode(true);
             }
             "--foreground" | "-f" => foreground = true,
-            other => return Err(format!("未知选项 `{}`", other)),
+            other => return Err(format!("unknown option `{}`", other)),
         }
     }
     let _ = foreground;
 
     signals::install();
-    let daemon = Daemon::new(paths.clone(), options).map_err(|e| format!("启动失败：{}", e))?;
-    // fail-closed：没有初始化基线就拒绝启动
+    let daemon =
+        Daemon::new(paths.clone(), options).map_err(|e| format!("startup failed: {}", e))?;
+    // fail-closed: refuse to start without an initial baseline
     wifisync_sys::snapshot::require_baseline(paths)
-        .map_err(|e| format!("{}（拒绝在缺少初始化基线的情况下启动）", e))?;
+        .map_err(|e| format!("{} (refusing to start without an initial baseline)", e))?;
     Arc::new(daemon)
         .start()
-        .map_err(|e| format!("运行失败：{}", e))?;
+        .map_err(|e| format!("run failed: {}", e))?;
     Ok(0)
 }

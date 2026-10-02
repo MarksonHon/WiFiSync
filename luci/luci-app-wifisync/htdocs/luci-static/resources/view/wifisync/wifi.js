@@ -11,20 +11,20 @@ return view.extend({
 	render: function(data) {
 		var source = data[0] || {}, caps = data[1] || {};
 		var kvrAvailable = !!(source.kvr && source.kvr.available);
-		var plan = E('pre', { 'style': 'white-space:pre-wrap' }, '（保存后自动刷新）');
+		var plan = E('pre', { 'style': 'white-space:pre-wrap' }, _('(refreshed after saving)'));
 		var message = E('div', {});
 
 		var endpoints = [];
 
 		function renderKvrNote() {
-			if (kvrAvailable) return ws.notice('检测到完整版 wpad，802.11k/v/r 可用。', 'success');
-			return ws.notice('KVR 不可用：' + ((source.kvr && source.kvr.note) || '需要完整版 wpad') +
-				'。请安装 `wpad-mbedtls`（或 `wpad`）而不是 `wpad-basic-mbedtls`。', 'error');
+			if (kvrAvailable) return ws.notice(_('Full wpad detected: 802.11k/v/r is available.'), 'success');
+			return ws.notice(_('KVR unavailable') + ': ' + (ws.message(source.kvr && source.kvr.note) || _('the full wpad package is required')) +
+				'. ' + _('Install wpad-mbedtls (or wpad) instead of wpad-basic-mbedtls.'), 'error');
 		}
 
 		function renderPlan() {
 			return ws.callPlan().then(function(next) {
-				plan.textContent = next.text || '（无）';
+				plan.textContent = ws.planText(next) || _('(none)');
 				return next;
 			});
 		}
@@ -36,14 +36,14 @@ return view.extend({
 			flags[name] = E('input', { 'type': 'checkbox', 'checked': '' });
 			endpoints.push(E('div', { 'class': 'cbi-value' }, [
 				E('label', { 'class': 'cbi-value-title' }, E('span', {}, [ flags[name], ' ', name ])),
-				E('div', { 'class': 'cbi-value-field' }, kvrAvailable ? '启用' : 'wpad 不支持时会被忽略')
+				E('div', { 'class': 'cbi-value-field' }, kvrAvailable ? _('Enabled') : _('Ignored when wpad does not support it'))
 			]));
 		});
 
 		function save() {
 			if (!kvrAvailable) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice('缺少完整版 wpad，拒绝开启 KVR。', 'error'));
+				message.appendChild(ws.notice(_('Refusing to enable KVR: the full wpad package is missing.'), 'error'));
 				return;
 			}
 			var custom = {
@@ -58,38 +58,38 @@ return view.extend({
 				return renderPlan();
 			}).then(function() {
 				message.innerHTML = '';
-				message.appendChild(ws.notice('KVR 参数已保存（随 NetworkProfile 下发给 AP）', 'success'));
+				message.appendChild(ws.notice(_('KVR parameters saved (distributed to APs with the NetworkProfile)'), 'success'));
 			}).catch(function(err) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice(String(err.message || err), 'error'));
+				message.appendChild(ws.notice(ws.errorText(err), 'error'));
 			});
 		}
 
-		// Wi-Fi 中继说明（不实现 mesh）
+		// Wi-Fi relay notes (no mesh support)
 		return E('div', {}, [
-			ws.card('KVR（802.11k / v / r）', [
+			ws.card(_('KVR (802.11k / v / r)'), [
 				renderKvrNote(),
-				ws.kv('设备 radio', E('span', {}, (caps.radios || []).map(function(r) {
+				ws.kv(_('Device radios'), E('span', {}, (caps.radios || []).map(function(r) {
 					return r.name + (r.band ? '(' + r.band + ')' : '');
-				}).join(', ') || '无')),
-				ws.kv('漫游域 mobility_domain', domain),
+				}).join(', ') || _('none'))),
+				ws.kv(_('Mobility domain'), domain),
 			].concat(endpoints).concat([
 				E('div', { 'class': 'cbi-value' }, [
-					E('div', { 'class': 'cbi-value-field' }, [ ws.submit('保存 KVR 参数', save) ])
+					E('div', { 'class': 'cbi-value-field' }, [ ws.submit(_('Save KVR parameters'), save) ])
 				]),
 				message
-			]), '所有 KVR 参数随 Controller 下发的 NetworkProfile 统一下发到各 AP，保证 mobility_domain 一致。'),
+			]), _('All KVR parameters are distributed to every AP with the NetworkProfile pushed by the Controller, keeping mobility_domain consistent.')),
 
-			ws.card('Wi-Fi 中继（不使用 mesh）', [
+			ws.card(_('Wi-Fi relay (no mesh)'), [
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' },
-						'中继一律使用标准 Wi-Fi 中继：上行 wpa_supplicant(STA) + 下行 hostapd(AP)。' +
-						'本程序不实现 802.11s / batman 等 mesh 组网。' +
-						'中继链路下若 802.11r 受限，会自动回退到 ft_over_ds。')
+						_('Relay always uses a standard Wi-Fi relay: wpa_supplicant(STA) upstream plus hostapd(AP) downstream.') +
+						_('This program does not implement mesh networking such as 802.11s or batman.') +
+						_('If 802.11r is restricted on the relay link, it automatically falls back to ft_over_ds.'))
 				])
 			]),
 
-			ws.card('对应的写入计划', [ plan ])
+			ws.card(_('Resulting write plan'), [ plan ])
 		]);
 	},
 

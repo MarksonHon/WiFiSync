@@ -1,12 +1,12 @@
 #!/bin/sh /etc/rc.common
 # SPDX-License-Identifier: GPL-2.0-only
 #
-# WifiSync 服务脚本
+# WifiSync service script
 #
-# 生命周期纪律（需求 11）：
-#   * 启动：守护进程自己先建立/校验初始化基线，再开始工作（缺基线则拒绝启动）
-#   * 停止：守护进程收到 SIGTERM 后同步恢复原有网络；本脚本在其后再补一次幂等恢复，
-#           避免 procd 先 SIGKILL 导致恢复没做完。
+# Lifecycle discipline (requirement 11):
+#   * start: the daemon creates/verifies the initial baseline itself before working (it refuses to start without a baseline)
+#   * stop: the daemon restores the original network synchronously on SIGTERM; this script then runs one more idempotent restore,
+#           to avoid an incomplete restore when procd sends SIGKILL first.
 
 START=99
 STOP=01
@@ -27,14 +27,14 @@ start_service() {
 }
 
 stop_service() {
-	# 兜底恢复：幂等，已经恢复过也不会造成重复改动
+	# Fallback restore: idempotent, no duplicate changes even if a restore already happened
 	[ -x "$PROG" ] || return 0
 	if [ -f "$NO_RESTORE_FLAG" ]; then
-		logger -t wifisync "检测到 $NO_RESTORE_FLAG，跳过停止前恢复"
+		logger -t wifisync "found $NO_RESTORE_FLAG, skipping the pre-stop restore"
 		return 0
 	fi
 	"$PROG" restore >/dev/null 2>&1 || \
-		logger -t wifisync "停止前恢复失败，请检查 /etc/wifisync/backup/initial"
+		logger -t wifisync "pre-stop restore failed, check /etc/wifisync/backup/initial"
 	return 0
 }
 

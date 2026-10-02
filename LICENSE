@@ -13,5 +13,5 @@ PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 The full text of the GNU General Public License version 2 is available at:
     https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
 
-OpenWrt 官方源码树中亦包含一份副本：
+A copy is also included in the official OpenWrt source tree:
     https://github.com/openwrt/openwrt/blob/main/LICENSE

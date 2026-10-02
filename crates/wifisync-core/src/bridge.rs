@@ -1,22 +1,25 @@
-//! 网桥规划（需求 5 / 10）。
+//! Bridge planning (requirement 5 / 10).
 //!
-//! 规则只有一条，但是**唯一**一条：
+//! There is only one rule, but it is the **only** one:
 //!
 //! ```text
 //! enable_bridge = roles.ap && !roles.gateway && !roles.controller
 //! ```
 //!
-//! 即：只有「纯 AP」设备才把所有网口（含出厂 WAN 口）并入 `br-lan`；
-//! 其它任何角色组合一律返回空计划（不改网口、不建桥）。
+//! That is: only a "pure AP" device merges all network ports (including the factory WAN port)
+//! into `br-lan`; any other role combination returns an empty plan (no port changes, no bridge).
 //!
-//! 数据结构一律是 **列表**（`Vec<BridgePlan>` + 每桥 `vlans`），
-//! 默认只产出一个 `br-lan`，为将来「多网桥 / VLAN 跨设备同步」预留。
+//! The data structure is always a **list** (`Vec<BridgePlan>` with per-bridge `vlans`),
+//! by default producing a single `br-lan`, reserving room for future "multi-bridge / VLAN
+//! cross-device sync".
 
 use crate::capability::Capabilities;
+use crate::message::Message;
 use crate::role::Roles;
 use serde::{Deserialize, Serialize};
 
-/// 网桥内的 VLAN 定义（本期默认不产出，结构先固定下来）。
+/// VLAN definition inside a bridge (not produced by default in this phase; the structure is
+/// fixed up front).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VlanDef {
     pub id: u16,
@@ -36,7 +39,7 @@ impl VlanDef {
     }
 }
 
-/// 一个网桥的完整定义。
+/// Complete definition of one bridge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BridgePlan {
     pub name: String,
@@ -72,13 +75,15 @@ impl BridgePlan {
 pub struct BridgePlanInput<'a> {
     pub roles: Roles,
     pub caps: &'a Capabilities,
-    /// 默认网桥名（`br-lan`）。
+    /// Default bridge name (`br-lan`).
     pub bridge_name: &'a str,
-    /// 调用方额外提供的网桥定义（多网桥扩展点，默认空）。
+    /// Extra bridge definitions supplied by the caller (multi-bridge extension point, empty by
+    /// default).
     pub extra: Vec<BridgePlan>,
 }
 
-/// 规划网桥。非「纯 AP」时返回空 Vec —— 由 [`crate::plan`] 保证不产生任何写入。
+/// Plan bridges. Returns an empty Vec unless the device is a "pure AP" — [`crate::plan`]
+/// guarantees no writes are produced.
 pub fn plan_bridges(input: &BridgePlanInput<'_>) -> Vec<BridgePlan> {
     if !input.roles.enable_bridge() {
         return Vec::new();
@@ -89,34 +94,37 @@ pub fn plan_bridges(input: &BridgePlanInput<'_>) -> Vec<BridgePlan> {
     if !ports.is_empty() {
         plans.push(BridgePlan::new(input.bridge_name, ports));
     }
-    // 多网桥 / VLAN 扩展点：由调用方注入，保持模型与顺序稳定。
+    // Multi-bridge / VLAN extension point: injected by the caller, keeping the model and
+    // ordering stable.
     plans.extend(input.extra.clone());
     plans
 }
 
-/// 供 UI 展示「为什么没有网桥」。
-pub fn bridge_disabled_reason(roles: &Roles) -> Option<String> {
+/// Explains to the UI why no bridge is created.
+///
+/// The blockers travel as comma separated tokens (`gateway`, `controller`,
+/// `no_ap`, or `none`) so the front end can render the role names in the
+/// user's language.
+pub fn bridge_disabled_reason(roles: &Roles) -> Option<Message> {
     if roles.enable_bridge() {
         return None;
     }
     let mut blockers = Vec::new();
     if roles.gateway {
-        blockers.push("Gateway");
+        blockers.push("gateway");
     }
     if roles.controller {
-        blockers.push("Controller");
+        blockers.push("controller");
     }
     if !roles.ap {
-        blockers.push("未承担 AP 角色");
+        blockers.push("no_ap");
     }
-    Some(format!(
-        "当前角色组合不建桥、不动网口（{}）",
-        if blockers.is_empty() {
-            "无".to_string()
-        } else {
-            blockers.join(" / ")
-        }
-    ))
+    let blockers = if blockers.is_empty() {
+        "none".to_string()
+    } else {
+        blockers.join(",")
+    };
+    Some(Message::new("bridge.blocked").param("blockers", blockers))
 }
 
 #[cfg(test)]
@@ -173,7 +181,11 @@ mod tests {
                 bridge_name: "br-lan",
                 extra: vec![],
             });
-            assert!(plans.is_empty(), "roles={:?} 不应建桥", roles);
+            assert!(
+                plans.is_empty(),
+                "roles={:?} must not create a bridge",
+                roles
+            );
         }
     }
 
@@ -214,7 +226,11 @@ mod tests {
             gateway: false,
         };
         let reason = bridge_disabled_reason(&roles).unwrap();
-        assert!(reason.contains("Controller"));
+        assert_eq!(reason.key, "bridge.blocked");
+        assert_eq!(
+            reason.params.get("blockers").map(String::as_str),
+            Some("controller")
+        );
         assert!(bridge_disabled_reason(&Roles::ap_only()).is_none());
     }
 }

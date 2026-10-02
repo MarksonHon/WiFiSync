@@ -41,9 +41,9 @@ return view.extend({
 
 		function updatePreview() {
 			return ws.callPlan().then(function(plan) {
-				preview.textContent = plan.text;
+				preview.textContent = ws.planText(plan) || _('(no changes)');
 			}).catch(function(err) {
-				preview.textContent = String(err.message || err);
+				preview.textContent = ws.errorText(err);
 			});
 		}
 
@@ -53,39 +53,41 @@ return view.extend({
 				.join(' ');
 			return ws.callRolesSet(value).then(function(result) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice('角色已保存：' + (result.value || '空') +
-					(result.bridge_enabled ? '（将自动建桥）' : '（不会建桥）'), 'success'));
+				message.appendChild(ws.notice(
+					_('Roles saved') + ': ' + (result.value || _('empty')) + ' ' +
+					(result.bridge_enabled ? _('(a bridge will be created)') : _('(no bridge will be created)')),
+					'success'));
 				(result.adjustments || []).forEach(function(text) {
-					message.appendChild(ws.notice(text, 'warning'));
+					message.appendChild(ws.notice(ws.message(text), 'warning'));
 				});
 				return updatePreview();
 			}).catch(function(err) {
 				message.innerHTML = '';
-				message.appendChild(ws.notice(String(err.message || err), 'error'));
+				message.appendChild(ws.notice(ws.errorText(err), 'error'));
 			});
 		}
 
 		updatePreview();
 
 		return E('div', {}, [
-			ws.card('角色设置', [
-				!apAllowed ? ws.notice('本设备没有无线模块：AP 角色已被禁用，默认角色中也不包含 AP。', 'warning') : null,
-				checkbox('controller', 'Controller（控制器）',
-					'只做两件事：① 新 AP 准入验证；② 网络信息下发。不改动本机任何网络配置。'),
-				checkbox('ap', 'AP（接入点）', apAllowed
-					? '同步 Controller 下发的网络信息（含 Wi-Fi）。仅"纯 AP"（无 Controller、无 Gateway）才会把所有网口并入 br-lan。'
-					: '本设备无无线模块，不可承担 AP 角色。', !apAllowed),
-				checkbox('gateway', 'Gateway（网关）',
-					'只要求选择对应的 LAN 接口用于识别与探测，绝不修改路由、NAT、防火墙等任何网络配置。'),
+			ws.card(_('Role settings'), [
+				!apAllowed ? ws.notice(_('This device has no wireless module: the AP role is disabled and is not part of the default roles.'), 'warning') : null,
+				checkbox('controller', _('Controller'),
+					_('Does only two things: (1) validate new AP admission; (2) push network information. It never modifies any local network configuration.')),
+				checkbox('ap', _('AP (access point)'), apAllowed
+					? _('Syncs the network information pushed by the Controller (including Wi-Fi). Only a "pure AP" (without Controller and Gateway) merges all ports into br-lan.')
+					: _('This device has no wireless module and cannot take the AP role.'), !apAllowed),
+				checkbox('gateway', _('Gateway'),
+					_('Only asks you to select the corresponding LAN interface for identification and probing; it never modifies routes, NAT, firewall or any other network configuration.')),
 				E('div', { 'class': 'cbi-value' }, [
 					E('div', { 'class': 'cbi-value-field' }, [
-						ws.submit('保存并查看影响', save)
+						ws.submit(_('Save and show impact'), save)
 					])
 				]),
 				message
-			].filter(Boolean), '建桥规则：enable_bridge = ap && !gateway && !controller'),
+			].filter(Boolean), _('Bridge rule: enable_bridge = ap && !gateway && !controller')),
 
-			ws.card('改动预览', [ preview ], '保存角色后，这里显示相应角色组合会做哪些改动。')
+			ws.card(_('Change preview'), [ preview ], _('After saving the roles, this shows what the selected role combination would change.'))
 		]);
 	},
 

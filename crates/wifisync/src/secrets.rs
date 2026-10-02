@@ -1,11 +1,12 @@
-//! 密钥存取与节点间认证。
+//! Secret storage and inter-node authentication.
 //!
-//! 约束（需求 2）：不使用 TLS —— 避免 `openssl-sys` / `ring`（ring 不支持 MIPS）。
-//! 因此：
-//! * 本地 API 走 UNIX socket（内核权限隔离，socket 权限 0600）；
-//! * 节点间心跳用 **HMAC-SHA256** 认证 + **ChaCha20-Poly1305** 加密载荷（全纯 Rust）。
+//! Constraint (requirement 2): no TLS -- avoid `openssl-sys` / `ring` (no MIPS support in ring).
+//! Therefore:
+//! * the local API goes over a UNIX socket (kernel permission isolation, socket mode 0600);
+//! * inter-node heartbeats use **HMAC-SHA256** authentication + **ChaCha20-Poly1305** encrypted
+//!   payloads (all pure Rust).
 
-#![allow(dead_code)] // seal/open 供后续「档案加密传输」使用，见 PLAN.md 里程碑 M3
+#![allow(dead_code)] // seal/open reserved for encrypted profile transfer; see docs/BACKEND.md (M3)
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hmac::{Hmac, Mac};
@@ -16,14 +17,15 @@ use wifisync_sys::state::random_hex;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// 用 PSK 计算 HMAC-SHA256（十六进制字符串形式）。
+/// Compute HMAC-SHA256 with the PSK (as a hex string).
 pub fn hmac_hex(psk: &[u8], message: &[u8]) -> String {
-    let mut mac = <HmacSha256 as Mac>::new_from_slice(psk).expect("HMAC 接受任意长度密钥");
+    let mut mac =
+        <HmacSha256 as Mac>::new_from_slice(psk).expect("HMAC accepts keys of any length");
     mac.update(message);
     hex(&mac.finalize().into_bytes())
 }
 
-/// 恒定时间比较（避免计时侧信道）。
+/// Constant-time comparison (avoids timing side channels).
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -35,7 +37,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// 派生密钥：以 PSK 为根的 SHA-256（保证密钥长度正确）。
+/// Derive a key: SHA-256 rooted at the PSK (ensures the correct key length).
 fn derive_key(psk: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"wifisync-v1");
@@ -46,7 +48,7 @@ fn derive_key(psk: &[u8]) -> [u8; 32] {
     key
 }
 
-/// 加密：输出 `nonce(12) || ciphertext`。
+/// Encrypt: outputs `nonce(12) || ciphertext`.
 pub fn seal(psk: &[u8], plaintext: &[u8], aad: &[u8]) -> SysResult<Vec<u8>> {
     let key = derive_key(psk);
     let cipher = ChaCha20Poly1305::new((&key).into());
@@ -62,19 +64,19 @@ pub fn seal(psk: &[u8], plaintext: &[u8], aad: &[u8]) -> SysResult<Vec<u8>> {
         )
         .map_err(|_| SysError::Parse {
             what: "chacha20poly1305".into(),
-            message: "加密失败".into(),
+            message: "encryption failed".into(),
         })?;
     let mut out = nonce_bytes;
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
 
-/// 解密 `nonce(12) || ciphertext`。
+/// Decrypt `nonce(12) || ciphertext`.
 pub fn open(psk: &[u8], sealed: &[u8], aad: &[u8]) -> SysResult<Vec<u8>> {
     if sealed.len() <= 12 {
         return Err(SysError::Parse {
             what: "chacha20poly1305".into(),
-            message: "密文长度不足".into(),
+            message: "ciphertext too short".into(),
         });
     }
     let key = derive_key(psk);
@@ -91,7 +93,7 @@ pub fn open(psk: &[u8], sealed: &[u8], aad: &[u8]) -> SysResult<Vec<u8>> {
         )
         .map_err(|_| SysError::Parse {
             what: "chacha20poly1305".into(),
-            message: "解密失败（密钥或完整性校验不通过）".into(),
+            message: "decryption failed (wrong key or integrity check failure)".into(),
         })
 }
 
@@ -109,7 +111,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// 密钥仓库：`/etc/wifisync/secrets/<ref>`（0600）。
+/// Secret store: `/etc/wifisync/secrets/<ref>` (0600).
 pub struct SecretStore {
     dir: std::path::PathBuf,
 }

@@ -1,4 +1,5 @@
-//! 长驻服务：生命周期（**启动先备份 / 停止先恢复**）、准入、下发、看门狗。
+//! Resident service: lifecycle (**back up on start / restore on stop**), admission, plan delivery,
+//! and the watchdog.
 
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, RwLock};
@@ -12,6 +13,7 @@ use wifisync_core::plan::{build_write_plan, PlanInput, WritePlan};
 use wifisync_core::profile::NetworkProfile;
 use wifisync_core::role::Roles;
 use wifisync_core::wifi_source::{self, ResolvedWifi, SourceContext, WifiSourceConfig};
+use wifisync_core::Message;
 use wifisync_sys::error::SysResult;
 use wifisync_sys::restore::Restorer;
 use wifisync_sys::snapshot::{now, SnapshotStore};
@@ -23,9 +25,9 @@ use crate::{log_error, log_info, log_warn, probe, rpc, signals};
 
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
-    /// 停止时不恢复（逃生开关，需用户显式要求）。
+    /// Do not restore on stop (escape hatch; must be explicitly requested by the user).
     pub no_restore_on_stop: bool,
-    /// 日志输出为 JSON（便于 LuCI 解析）。
+    /// Emit logs as JSON (easier for LuCI to parse).
     pub json_log: bool,
 }
 
@@ -57,35 +59,39 @@ impl Daemon {
         let mut caps = wifisync_sys::sysfs::capabilities(&paths, wireless_text.as_deref())?;
         caps.radios.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // 需求 3：从未配置过角色时，按硬件能力取默认值 ——
-        // 有无线 ⇒ controller + ap + gateway；无无线 ⇒ controller + gateway（不含 AP）。
+        // Requirement 3: with no configured roles, take defaults from the hardware capabilities:
+        // wireless present => controller + ap + gateway; absent => controller + gateway (no AP).
         if !config.roles_configured {
             config.roles = Roles::default_for(&caps);
             config.roles_configured = true;
             if config.device_id.is_empty() {
                 config.device_id = state.device_id()?;
             }
-            // 首次写入失败（例如宿主机没有 uci）不应该阻止服务继续，只提示
+            // A failed first write (e.g. no uci on the host) must not stop the service, only warn
             let ops = config.to_uci_ops();
             if let Err(e) = uci.apply_ops(&ops) {
-                log_warn!("写入默认角色配置失败（{:?}）: {}", config.roles, e);
+                log_warn!(
+                    "failed to write the default role configuration ({:?}): {}",
+                    config.roles,
+                    e
+                );
             } else {
                 log_info!(
-                    "已按硬件能力初始化角色：{}（{}）",
+                    "roles initialized from the hardware capabilities: {} ({})",
                     config.roles.to_uci_value(),
                     if caps.has_wifi() {
-                        "检测到无线模块"
+                        "wireless module detected"
                     } else {
-                        "未检测到无线模块，已取消 AP 角色"
+                        "no wireless module detected, AP role dropped"
                     }
                 );
             }
         }
 
-        // 硬件不支持则剔除 AP（需求 3 的双重保险）
+        // Drop AP when the hardware does not support it (belt and braces for requirement 3)
         let adjustments = config.roles.sanitize(&caps);
         if !adjustments.is_empty() {
-            log_warn!("角色因硬件限制被调整：{:?}", adjustments);
+            log_warn!("roles adjusted due to hardware limits: {:?}", adjustments);
         }
         let admissions = state.admissions().unwrap_or_default();
         let failsafe = Failsafe::for_roles(config.failsafe.clone(), &config.roles);
@@ -105,13 +111,14 @@ impl Daemon {
         })
     }
 
-    // ── 生命周期 ──────────────────────────────────────────────────────────
+    // ── Lifecycle ──────────────────────────────────────────────────────────
 
-    /// 启动：**必须先成功建立/校验初始化基线**，否则拒绝启动（fail-closed）。
+    /// Start: **the initial baseline must first be created/verified successfully**, otherwise
+    /// refuse to start (fail-closed).
     pub fn start(self: Arc<Self>) -> SysResult<()> {
         let cfg = self.config_snapshot();
         log_info!(
-            "启动 wifisync {}（设备 {}，角色 [{}]）",
+            "starting wifisync {} (device {}, roles [{}])",
             wifisync_core::VERSION,
             cfg.device_id,
             cfg.roles.to_uci_value()
@@ -120,80 +127,80 @@ impl Daemon {
         self.paths.ensure_dir(&self.paths.persistent_dir())?;
         self.paths.ensure_dir(&self.paths.run_dir())?;
 
-        // 0. 异常退出检测
+        // 0. Dirty-shutdown detection
         if let Some(reason) = self.state.dirty_reason() {
             log_warn!(
-                "检测到上次未正常退出（{}），建议检查网络状态；已保留初始基线可供恢复",
+                "previous shutdown was not clean ({}); check the network state, the initial baseline is available for recovery",
                 reason
             );
         }
 
-        // 1. 初始化基线（不可变）
+        // 1. Initial baseline (immutable)
         let (manifest, created) = self.snapshots.ensure_initial(&cfg)?;
         if created {
             log_info!(
-                "已建立初始化网络基线（{} 个文件，时间 {}）",
+                "initial network baseline created ({} files, {})",
                 manifest.files.len(),
                 manifest.created_at
             );
         } else {
             let report = self.snapshots.verify(&self.paths.initial_snapshot_dir())?;
             if report.is_ok() {
-                log_info!("初始化基线校验通过");
+                log_info!("initial baseline verification passed");
             } else {
-                log_warn!("初始化基线校验异常：{}", report.summary());
+                log_warn!("initial baseline verification failed: {}", report.summary());
             }
         }
 
-        // 2. 每次启动的滚动快照
+        // 2. Rolling snapshot for this start
         match self.snapshots.create(SnapshotKind::PreStart, &cfg, &[]) {
-            Ok(snapshot) => log_info!("已创建启动前快照（{}）", snapshot.created_at),
-            Err(e) => log_warn!("创建启动前快照失败：{}", e),
+            Ok(snapshot) => log_info!("pre-start snapshot created ({})", snapshot.created_at),
+            Err(e) => log_warn!("creating the pre-start snapshot failed: {}", e),
         }
         if let Err(e) = self
             .snapshots
             .prune(&wifisync_core::backup::RetentionPolicy::default())
         {
-            log_warn!("快照清理失败：{}", e);
+            log_warn!("pruning snapshots failed: {}", e);
         }
 
-        // 3. 脏标记 + socket
+        // 3. Dirty flag + socket
         self.state.mark_dirty("running")?;
         let server = rpc::Server::bind(&self.paths.socket_file())?;
-        log_info!("已监听 {}", server.socket_path().display());
+        log_info!("listening on {}", server.socket_path().display());
 
-        // 4. 看门狗（仅 AP 生效，由 Failsafe 内部判断）
+        // 4. Watchdog (only effective for AP; Failsafe decides internally)
         self.spawn_watchdog();
 
-        // 5. 服务循环：RPC 在独立线程，主线程等待退出信号
+        // 5. Service loop: RPC on its own thread, main thread waits for the shutdown signal
         let handler_daemon = Arc::clone(&self);
         let serving = std::thread::spawn(move || {
             let result = server.serve(move |method, params| handler_daemon.handle(method, params));
             if let Err(e) = result {
-                log_error!("RPC 服务退出：{}", e);
+                log_error!("RPC server exited: {}", e);
             }
         });
 
         while !signals::shutdown_requested() {
             if signals::take_reload_request() {
-                log_info!("收到 SIGHUP，重载配置");
+                log_info!("SIGHUP received, reloading the configuration");
                 if let Err(e) = self.reload() {
-                    log_error!("重载配置失败：{}", e);
+                    log_error!("reloading the configuration failed: {}", e);
                 }
             }
             signals::sleep_interruptible(500);
         }
 
-        log_info!("收到退出信号，开始收尾");
-        let _ = serving; // 接受循环随进程退出结束
+        log_info!("shutdown signal received, cleaning up");
+        let _ = serving; // the accept loop ends when the process exits
         self.stop()?;
         Ok(())
     }
 
-    /// 停止：**先恢复原有网络，再退出**。
+    /// Stop: **restore the original network first, then exit**.
     pub fn stop(&self) -> SysResult<()> {
         if self.options.no_restore_on_stop {
-            log_warn!("--no-restore 已启用：本次停止不恢复网络配置（用户显式要求）");
+            log_warn!("--no-restore-on-stop is enabled: the network configuration is not restored on this stop (explicitly requested)");
         } else {
             let cfg = self.config_snapshot();
             let dir = self.paths.initial_snapshot_dir();
@@ -201,28 +208,37 @@ impl Daemon {
                 match self.restorer.plan(cfg.restore_mode, &dir) {
                     Ok(plan) => {
                         if plan.is_blocked() {
-                            log_error!("停止前恢复被阻止：{}", plan.summary());
+                            log_error!("pre-stop restore blocked: {}", plan.summary());
                         } else {
                             match self.restorer.execute(&plan, &dir) {
                                 Ok(report) => {
                                     if report.success() {
-                                        log_info!("停止前已恢复原有网络：{}", report.summary());
+                                        log_info!(
+                                            "previous network restored before stopping: {}",
+                                            report.summary()
+                                        );
                                     } else {
-                                        log_error!("停止前恢复存在问题：{}", report.summary());
+                                        log_error!(
+                                            "pre-stop restore had problems: {}",
+                                            report.summary()
+                                        );
                                         let _ = wifisync_sys::netifd::restart_network();
                                     }
                                 }
                                 Err(e) => {
-                                    log_error!("停止前恢复失败：{}，尝试重启网络", e);
+                                    log_error!(
+                                        "pre-stop restore failed: {}, restarting the network",
+                                        e
+                                    );
                                     let _ = wifisync_sys::netifd::restart_network();
                                 }
                             }
                         }
                     }
-                    Err(e) => log_error!("生成恢复计划失败：{}", e),
+                    Err(e) => log_error!("building the restore plan failed: {}", e),
                 }
             } else {
-                log_warn!("没有初始基线，跳过停止前恢复");
+                log_warn!("no initial baseline, skipping the pre-stop restore");
             }
         }
 
@@ -231,11 +247,11 @@ impl Daemon {
         if socket.exists() {
             let _ = std::fs::remove_file(socket);
         }
-        log_info!("wifisync 已停止");
+        log_info!("wifisync stopped");
         Ok(())
     }
 
-    /// 重新读取配置与能力（SIGHUP / `roles.set` 后调用）。
+    /// Reload the configuration and capabilities (called after SIGHUP / `roles.set`).
     pub fn reload(&self) -> SysResult<()> {
         let mut config = self.uci.load_config()?;
         if config.device_id.is_empty() {
@@ -254,7 +270,10 @@ impl Daemon {
         let mut failsafe = self.failsafe.lock().unwrap();
         failsafe.set_config(failsafe_config);
         if !adjustments.is_empty() {
-            log_warn!("配置中的角色因硬件限制被调整（{:?}）", adjustments);
+            log_warn!(
+                "roles from the configuration adjusted due to hardware limits ({:?})",
+                adjustments
+            );
         }
         failsafe.on_event(FailsafeEvent::Confirmed, now());
         let _ = roles;
@@ -264,7 +283,7 @@ impl Daemon {
     fn spawn_watchdog(self: &Arc<Self>) {
         let daemon = Arc::clone(self);
         std::thread::spawn(move || {
-            log_info!("看门狗已启动（间隔 5 秒）");
+            log_info!("watchdog started (5 s interval)");
             while !signals::shutdown_requested() {
                 signals::sleep_interruptible(5_000);
                 if signals::shutdown_requested() {
@@ -278,7 +297,7 @@ impl Daemon {
     fn watchdog_tick(&self) {
         let cfg = self.config_snapshot();
 
-        // L2：心跳探测（仅 AP 且启用故障恢复时才有意义）
+        // L2: heartbeat probe (only meaningful for AP with failsafe enabled)
         if cfg.failsafe.enabled && cfg.roles.ap {
             if let Some(endpoint) = cfg.failsafe.heartbeat_endpoint.clone() {
                 let reachable = probe::probe(&endpoint).reachable;
@@ -297,9 +316,9 @@ impl Daemon {
             failsafe.tick(now())
         };
         if let Some(decision) = decision {
-            log_warn!("故障恢复触发：{}", decision.reason);
+            log_warn!("failover triggered: {}", decision.reason);
             if let Err(e) = self.perform_recovery(&decision) {
-                log_error!("执行故障恢复失败：{}", e);
+                log_error!("performing the failover recovery failed: {}", e);
             }
         }
     }
@@ -309,19 +328,19 @@ impl Daemon {
         let cfg = self.config_snapshot();
         let plan = self.restorer.plan(cfg.restore_mode, &dir)?;
         if plan.is_blocked() {
-            log_error!("故障恢复被阻止：{}", plan.summary());
+            log_error!("failover recovery blocked: {}", plan.summary());
         } else {
             let report = self.restorer.execute(&plan, &dir)?;
-            log_info!("故障恢复结果：{}", report.summary());
+            log_info!("failover recovery result: {}", report.summary());
         }
         if decision.reboot {
-            log_warn!("按配置重启设备");
+            log_warn!("rebooting the device as configured");
             let _ = wifisync_sys::netifd::reboot();
         }
         Ok(())
     }
 
-    // ── 计划与写入 ────────────────────────────────────────────────────────
+    // ── Plan and write ────────────────────────────────────────────────────────
 
     pub fn config_snapshot(&self) -> WifisyncConfig {
         self.config.read().unwrap().clone()
@@ -331,7 +350,8 @@ impl Daemon {
         self.caps.read().unwrap().clone()
     }
 
-    /// 解析 Wi-Fi 信息源（可能报出「来源不可用」这类用户可读错误）。
+    /// Resolve the Wi-Fi information source (may return user-readable errors such as
+    /// "source unavailable").
     pub fn resolve_wifi(&self) -> Result<Option<ResolvedWifi>, String> {
         let cfg = self.config_snapshot();
         if !cfg.roles.ap {
@@ -359,7 +379,7 @@ impl Daemon {
         }
     }
 
-    /// 生成当前的写入计划（**唯一**的网络写入来源）。
+    /// Build the current write plan (**the only** source of network writes).
     pub fn current_plan(&self) -> Result<WritePlan, String> {
         let cfg = self.config_snapshot();
         let caps = self.caps_snapshot();
@@ -375,11 +395,11 @@ impl Daemon {
         }))
     }
 
-    /// 应用写入计划：非空才动系统，并武装 apply-guard。
+    /// Apply the write plan: touch the system only when non-empty, and arm the apply-guard.
     pub fn apply(&self) -> Result<Value, String> {
         let cfg = self.config_snapshot();
 
-        // 准入检查：纯 AP 设备必须已获批准（需求 8）
+        // Admission check: a pure AP device must be approved (requirement 8)
         if cfg.roles.ap && !cfg.roles.controller {
             let admissions = self.admissions.lock().unwrap().clone();
             admissions
@@ -389,16 +409,16 @@ impl Daemon {
 
         let plan = self.current_plan()?;
         if plan.is_empty() {
-            // 零侵入路径：不写 uci、不 reload
+            // Zero-intrusion path: no uci write, no reload
             return Ok(json!({
                 "changed": 0,
                 "plan": plan.dry_run_text(),
                 "notes": plan.notes,
-                "message": "本角色组合不需要修改网络（0 项改动）",
+                "message": Message::new("daemon.apply.nothing_to_do"),
             }));
         }
 
-        // 写入前快照 + 记录受管键（供精确恢复）
+        // Pre-write snapshot + record the managed keys (for precise restore)
         let snapshot = self
             .snapshots
             .create(SnapshotKind::PreChange, &cfg, &plan.managed_keys())
@@ -408,22 +428,24 @@ impl Daemon {
             .dir_for(SnapshotKind::PreChange, snapshot.created_at);
         let _ = self.snapshots.write_last_change_marker(&snapshot_dir);
 
-        // 武装死手定时器
+        // Arm the dead-man timer
         let guard = {
             let mut failsafe = self.failsafe.lock().unwrap();
             failsafe.on_event(FailsafeEvent::ApplyStarted, now());
             failsafe.config().clone()
         };
 
-        // 真正的写入
+        // The actual write
         let executed = self
             .uci
             .apply_ops(&plan.ops)
-            .map_err(|e| format!("写入 uci 失败：{}", e))?;
+            .map_err(|e| format!("writing uci failed: {}", e))?;
         if plan.reload_wifi {
-            wifisync_sys::netifd::reload_wifi().map_err(|e| format!("重载无线失败：{}", e))?;
+            wifisync_sys::netifd::reload_wifi()
+                .map_err(|e| format!("reloading wireless failed: {}", e))?;
         } else if plan.reload_network {
-            wifisync_sys::netifd::reload_network().map_err(|e| format!("重载网络失败：{}", e))?;
+            wifisync_sys::netifd::reload_network()
+                .map_err(|e| format!("reloading the network failed: {}", e))?;
         }
 
         Ok(json!({
@@ -433,11 +455,12 @@ impl Daemon {
             "notes": plan.notes,
             "snapshot": snapshot_dir.to_string_lossy(),
             "confirm_deadline_secs": guard.apply_confirm_secs,
-            "message": format!("已应用 {} 项改动", plan.ops.len()),
+            "message": Message::new("daemon.apply.applied")
+                .param("count", plan.ops.len().to_string()),
         }))
     }
 
-    /// 确认应用成功（解除 apply-guard）。
+    /// Confirm a successful apply (releases the apply-guard).
     pub fn confirm(&self) -> Value {
         let mut failsafe = self.failsafe.lock().unwrap();
         let armed = failsafe.state().clone();
@@ -449,10 +472,10 @@ impl Daemon {
         })
     }
 
-    /// 回滚到最近一次写入前快照（L1）。
+    /// Roll back to the most recent pre-write snapshot (L1).
     pub fn revert_last_change(&self) -> Result<Value, String> {
         let Some(dir) = self.snapshots.last_change_dir() else {
-            return Err("没有可用的写入前快照".to_string());
+            return Err("no pre-change snapshot available".to_string());
         };
         let cfg = self.config_snapshot();
         let plan = self
@@ -472,12 +495,12 @@ impl Daemon {
         }
         Ok(json!({
             "snapshot": dir.to_string_lossy(),
-            "report": report.summary(),
+            "report": report.summary_message(),
             "applied": report.applied,
         }))
     }
 
-    /// 按指定快照恢复（默认初始化基线）。
+    /// Restore from the given snapshot (the initial baseline by default).
     pub fn restore(
         &self,
         mode: Option<RestoreMode>,
@@ -490,7 +513,10 @@ impl Daemon {
             Some(path) => std::path::PathBuf::from(path),
         };
         if !dir.exists() {
-            return Err(format!("快照目录不存在：{}", dir.display()));
+            return Err(format!(
+                "snapshot directory does not exist: {}",
+                dir.display()
+            ));
         }
         let plan = self.restorer.plan(mode, &dir).map_err(|e| e.to_string())?;
         if plan.is_blocked() {
@@ -503,13 +529,13 @@ impl Daemon {
         Ok(json!({
             "mode": format!("{:?}", mode),
             "snapshot": dir.to_string_lossy(),
-            "report": report.summary(),
+            "report": report.summary_message(),
             "applied": report.applied,
             "skipped": plan.skipped,
         }))
     }
 
-    // ── RPC 分发 ──────────────────────────────────────────────────────────
+    // ── RPC dispatch ──────────────────────────────────────────────────────────
 
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, String> {
         match method {
@@ -567,7 +593,7 @@ impl Daemon {
                 let target = params
                     .get("target")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| "缺少 target 参数".to_string())?;
+                    .ok_or_else(|| "missing target argument".to_string())?;
                 Ok(probe::probe(target).to_json())
             }
             "admission.list" => {
@@ -595,7 +621,7 @@ impl Daemon {
                 }))
             }
             "backup.verify" => {
-                // 未指定路径时：优先校验不可变基线，其次校验最新快照
+                // With no path given: verify the immutable baseline first, then the latest snapshot
                 let dir = match params.get("path").and_then(|v| v.as_str()) {
                     Some(path) => std::path::PathBuf::from(path),
                     None => {
@@ -608,8 +634,7 @@ impl Daemon {
                                 .last()
                                 .map(|meta| std::path::PathBuf::from(meta.path.clone()))
                                 .ok_or_else(|| {
-                                    "还没有任何快照：请先启动服务（会自动建立初始化基线）或用 `wifisync backup create` 手动创建"
-                                        .to_string()
+                                    Message::new("daemon.backup.no_snapshot").to_string()
                                 })?
                         }
                     }
@@ -618,7 +643,7 @@ impl Daemon {
                 Ok(json!({
                     "ok": report.is_ok(),
                     "path": dir.to_string_lossy(),
-                    "summary": report.summary(),
+                    "summary": report.summary_message(),
                     "missing": report.missing,
                     "changed": report.changed,
                     "extra": report.extra,
@@ -672,7 +697,7 @@ impl Daemon {
                 let tail: Vec<&str> = content.lines().rev().take(lines).collect();
                 Ok(json!({ "lines": tail.into_iter().rev().collect::<Vec<_>>() }))
             }
-            other => Err(format!("未知方法 `{}`", other)),
+            other => Err(format!("unknown method `{}`", other)),
         }
     }
 
@@ -730,11 +755,13 @@ impl Daemon {
         let raw = params
             .get("roles")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "缺少 roles 参数（如 \"controller ap\"）".to_string())?;
+            .ok_or_else(|| "missing roles argument (e.g. \"controller ap\")".to_string())?;
         let mut roles = Roles::from_uci_value(raw).map_err(|e| e.to_string())?;
         let caps = self.caps_snapshot();
         if roles.ap && !caps.has_wifi() {
-            return Err("本设备没有无线模块，禁止选择 AP 角色".to_string());
+            return Err(
+                "this device has no wireless module, the AP role cannot be selected".to_string(),
+            );
         }
         let adjustments = roles.sanitize(&caps);
         roles.validate(&caps).map_err(|e| e.to_string())?;
@@ -805,9 +832,9 @@ impl Daemon {
         let kind = params
             .get("kind")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "缺少 kind 参数".to_string())?;
+            .ok_or_else(|| "missing kind argument".to_string())?;
         let kind = wifi_source::WifiSourceKind::from_str_opt(kind)
-            .ok_or_else(|| format!("未知来源 `{}`", kind))?;
+            .ok_or_else(|| format!("unknown source `{}`", kind))?;
 
         let confirmed = params
             .get("local_wifi_change_confirmed")
@@ -862,7 +889,7 @@ impl Daemon {
             }
         }
 
-        // 校验：自定义 + 本机 AP 必须确认
+        // Validation: custom + local AP requires explicit confirmation
         let cfg = self.config_snapshot();
         cfg.validate(&self.caps_snapshot())
             .map_err(|e| e.to_string())?;
@@ -892,7 +919,10 @@ impl Daemon {
         let caps = self.caps_snapshot();
         for iface in &interfaces {
             if !caps.port_names().contains(iface) {
-                return Err(format!("接口 `{}` 不在本机网口列表中", iface));
+                return Err(format!(
+                    "interface `{}` is not in the local port list",
+                    iface
+                ));
             }
         }
         {
@@ -905,7 +935,7 @@ impl Daemon {
             "saved": true,
             "lan_ifaces": interfaces,
             "network_modified": !plan.is_empty(),
-            "message": "Gateway 角色不会修改任何网络配置，这里只记录接口用于识别与探测",
+            "message": Message::new("daemon.gateway.recorded"),
         }))
     }
 
@@ -913,7 +943,7 @@ impl Daemon {
         let device_id = params
             .get("device_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "缺少 device_id".to_string())?;
+            .ok_or_else(|| "missing device_id".to_string())?;
         let mac = params.get("mac").and_then(|v| v.as_str()).unwrap_or("");
         let mut entry = AdmissionEntry::new(device_id, mac, now());
         entry.hostname = params
@@ -948,7 +978,7 @@ impl Daemon {
         let device_id = params
             .get("device_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "缺少 device_id".to_string())?;
+            .ok_or_else(|| "missing device_id".to_string())?;
         {
             let mut registry = self.admissions.lock().unwrap();
             action(&mut registry, device_id).map_err(|e| e.to_string())?;
@@ -1010,14 +1040,14 @@ impl Daemon {
             params
                 .get("profile")
                 .cloned()
-                .ok_or_else(|| "缺少 profile".to_string())?,
+                .ok_or_else(|| "missing profile".to_string())?,
         )
-        .map_err(|e| format!("profile 解析失败：{}", e))?;
+        .map_err(|e| format!("parsing the profile failed: {}", e))?;
         incoming.validate()?;
 
         let cfg = self.config_snapshot();
         if !cfg.roles.controller {
-            return Err("本设备未承担 Controller 角色，不能下发网络信息".to_string());
+            return Err("this device does not take the Controller role and cannot distribute network information".to_string());
         }
         let version = self.state.bump_profile_version().map_err(rpc::sys_err)?;
         let merged = {

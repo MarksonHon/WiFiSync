@@ -1,7 +1,7 @@
-//! 目录与文件路径。
+//! Directories and file paths.
 //!
-//! 所有路径都基于 [`Paths::root`]，便于测试时重定向到临时目录
-//! （环境变量 `WIFISYNC_ROOT`）。
+//! All paths are rooted at [`Paths::root`], so tests can redirect them to a temp directory
+//! (via the `WIFISYNC_ROOT` environment variable).
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,7 @@ impl Default for Paths {
 }
 
 impl Paths {
-    /// 生产环境：`root = "/"`；若设置了 `WIFISYNC_ROOT` 则使用它（测试用）。
+    /// Production: `root = "/"`; if `WIFISYNC_ROOT` is set it is used instead (for tests).
     pub fn new() -> Self {
         let root = std::env::var("WIFISYNC_ROOT").unwrap_or_else(|_| "/".to_string());
         Self {
@@ -53,17 +53,17 @@ impl Paths {
         self.persistent_dir().join("backup")
     }
 
-    /// 不可变的初始化基线目录。
+    /// Immutable initial baseline directory.
     pub fn initial_snapshot_dir(&self) -> PathBuf {
         self.backup_dir().join("initial")
     }
 
-    /// `/etc/wifisync/secrets`（0600）
+    /// `/etc/wifisync/secrets` (0600)
     pub fn secrets_dir(&self) -> PathBuf {
         self.persistent_dir().join("secrets")
     }
 
-    /// `/etc/wifisync/state.json`（准入登记簿、档案版本号等）
+    /// `/etc/wifisync/state.json` (admission registry, profile version, etc.)
     pub fn state_file(&self) -> PathBuf {
         self.persistent_dir().join("state.json")
     }
@@ -73,22 +73,22 @@ impl Paths {
         self.persistent_dir().join("device-id")
     }
 
-    /// 运行时目录（tmpfs）：`/var/run/wifisync`
+    /// Runtime directory (tmpfs): `/var/run/wifisync`
     pub fn run_dir(&self) -> PathBuf {
         self.root.join("var/run/wifisync")
     }
 
-    /// UNIX socket：`/var/run/wifisync/wifisync.sock`
+    /// UNIX socket: `/var/run/wifisync/wifisync.sock`
     pub fn socket_file(&self) -> PathBuf {
         self.run_dir().join("wifisync.sock")
     }
 
-    /// 「服务正在运行但未正常收尾」的脏标记。
+    /// Dirty marker for "service is running but did not shut down cleanly".
     pub fn dirty_marker(&self) -> PathBuf {
         self.run_dir().join("dirty")
     }
 
-    /// 服务日志（procd 也会收 stderr，这里额外留一份便于诊断）。
+    /// Service log (procd also captures stderr; this is an extra copy for diagnostics).
     pub fn log_file(&self) -> PathBuf {
         self.persistent_dir().join("wifisync.log")
     }
@@ -98,7 +98,7 @@ impl Paths {
         Ok(())
     }
 
-    /// 需要纳入基线的 uci 配置文件（存在才备份）。
+    /// uci config files to include in the baseline (backed up only if present).
     pub fn baseline_uci_files(&self) -> Vec<&'static str> {
         vec!["network", "wireless", "dhcp", "firewall", "system"]
     }

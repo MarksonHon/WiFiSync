@@ -10,7 +10,7 @@
 		}
 	},
 	"admin/services/wifisync/overview": {
-		"title": "状态总览",
+		"title": "Overview",
 		"order": 10,
 		"action": {
 			"type": "view",
@@ -18,7 +18,7 @@
 		}
 	},
 	"admin/services/wifisync/roles": {
-		"title": "角色",
+		"title": "Roles",
 		"order": 20,
 		"action": {
 			"type": "view",
@@ -26,7 +26,7 @@
 		}
 	},
 	"admin/services/wifisync/gateway": {
-		"title": "Gateway（零侵入）",
+		"title": "Gateway (zero-intrusion)",
 		"order": 30,
 		"action": {
 			"type": "view",
@@ -34,7 +34,7 @@
 		}
 	},
 	"admin/services/wifisync/controller": {
-		"title": "Controller（准入与下发）",
+		"title": "Controller (admission & distribution)",
 		"order": 40,
 		"action": {
 			"type": "view",
@@ -42,7 +42,7 @@
 		}
 	},
 	"admin/services/wifisync/bridge": {
-		"title": "网桥",
+		"title": "Bridge",
 		"order": 50,
 		"action": {
 			"type": "view",
@@ -50,7 +50,7 @@
 		}
 	},
 	"admin/services/wifisync/wifi": {
-		"title": "Wi-Fi 与 KVR",
+		"title": "Wi-Fi & KVR",
 		"order": 60,
 		"action": {
 			"type": "view",
@@ -58,7 +58,7 @@
 		}
 	},
 	"admin/services/wifisync/backup": {
-		"title": "备份与故障恢复",
+		"title": "Backup & failover",
 		"order": 70,
 		"action": {
 			"type": "view",
@@ -66,7 +66,7 @@
 		}
 	},
 	"admin/services/wifisync/diagnostics": {
-		"title": "诊断",
+		"title": "Diagnostics",
 		"order": 80,
 		"action": {
 			"type": "view",

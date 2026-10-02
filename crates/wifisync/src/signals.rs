@@ -1,4 +1,5 @@
-//! 信号处理：只置标志位，真正的收尾（恢复网络）在主循环里同步完成。
+//! Signal handling: only a flag is set; the actual teardown (restoring the network) is done
+//! synchronously in the main loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -13,7 +14,7 @@ extern "C" fn on_reload(_signal: libc::c_int) {
     RELOAD.store(true, Ordering::SeqCst);
 }
 
-/// 安装 SIGTERM / SIGINT / SIGHUP 处理器。
+/// Install the SIGTERM / SIGINT / SIGHUP handlers.
 pub fn install() {
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
@@ -35,12 +36,12 @@ pub fn shutdown_requested() -> bool {
     SHUTDOWN.load(Ordering::SeqCst)
 }
 
-/// 取出并清除「收到 SIGHUP，需要重载配置」的标志。
+/// Take and clear the "SIGHUP received, configuration reload needed" flag.
 pub fn take_reload_request() -> bool {
     RELOAD.swap(false, Ordering::SeqCst)
 }
 
-/// 睡眠指定毫秒，但每 100ms 醒来检查一次退出标志。
+/// Sleep for the given milliseconds, but wake every 100 ms to check the shutdown flag.
 pub fn sleep_interruptible(millis: u64) {
     let step = 100;
     let mut left = millis;

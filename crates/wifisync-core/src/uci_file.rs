@@ -1,6 +1,7 @@
-//! uci 配置文件解析（纯函数，用于「只恢复 wifisync 改过的键」）。
+//! uci configuration file parsing (pure functions, used to "restore only the keys wifisync
+//! changed").
 
-/// 一个 uci section。
+/// One uci section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UciSection {
     pub kind: String,
@@ -27,7 +28,7 @@ impl UciSection {
     }
 }
 
-/// 解析 uci 文件文本。忽略注释与未知行，容忍缩进。
+/// Parse uci file text. Comments and unknown lines are ignored; indentation is tolerated.
 pub fn parse(text: &str) -> Vec<UciSection> {
     let mut sections: Vec<UciSection> = Vec::new();
     for raw in text.lines() {
@@ -81,7 +82,7 @@ pub fn parse(text: &str) -> Vec<UciSection> {
     sections
 }
 
-/// 按 shell 风格拆分一行（支持单/双引号）。
+/// Split a line shell-style (single and double quotes are supported).
 fn split_uci_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -119,7 +120,7 @@ fn split_uci_tokens(line: &str) -> Vec<String> {
     tokens
 }
 
-/// 读取某个 section.option 的值。
+/// Read the value of a given section.option.
 pub fn get(text: &str, section: &str, option: &str) -> Option<String> {
     parse(text)
         .into_iter()
@@ -127,7 +128,7 @@ pub fn get(text: &str, section: &str, option: &str) -> Option<String> {
         .and_then(|s| s.option(option).map(|v| v.to_string()))
 }
 
-/// 把 `network.lan.ipaddr` 拆成 `(file, section, option)`；`network.lan` ⇒ option 为 `None`。
+/// Split `network.lan.ipaddr` into `(file, section, option)`; `network.lan` ⇒ option is `None`.
 pub fn split_key(key: &str) -> Option<(String, String, Option<String>)> {
     let mut parts = key.split('.');
     let file = parts.next()?.to_string();

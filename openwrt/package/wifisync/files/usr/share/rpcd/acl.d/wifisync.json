@@ -1,6 +1,6 @@
 {
 	"wifisync": {
-		"description": "WifiSync 组网工具：角色、网桥、Wi-Fi 源、准入、快照与故障恢复",
+		"description": "WifiSync networking tool: roles, bridge, Wi-Fi source, admission, snapshots and failover",
 		"read": {
 			"ubus": {
 				"wifisync": [

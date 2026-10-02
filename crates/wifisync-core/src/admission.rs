@@ -1,7 +1,7 @@
-//! 新 AP 准入（需求 8）。
+//! New AP admission (requirement 8).
 //!
-//! Controller 对 AP 只做两件事：**验证（准入）** 与 **信息下发**。
-//! 未通过准入的 AP 不得写入本机任何配置。
+//! The Controller does only two things to an AP: **verify (admit)** and **push information**.
+//! An AP that has not passed admission must not write any local configuration.
 
 use crate::error::{CoreError, CoreResult};
 use serde::{Deserialize, Serialize};
@@ -9,27 +9,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdmissionState {
-    /// 已上报，等待管理员批准。
+    /// Reported, waiting for administrator approval.
     Pending,
     Approved,
-    /// 被拒绝并进入黑名单。
+    /// Rejected and blacklisted.
     Rejected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdmissionEntry {
-    /// 设备持久化 UUID。
+    /// Persistent device UUID.
     pub device_id: String,
     pub mac: String,
     pub hostname: Option<String>,
-    /// 上报时的来源地址（用于展示与排查）。
+    /// Source address at report time (for display and troubleshooting).
     pub source_addr: Option<String>,
     pub model: Option<String>,
     pub radios: u32,
     pub first_seen: crate::Timestamp,
     pub last_seen: crate::Timestamp,
     pub state: AdmissionState,
-    /// 管理员备注。
+    /// Administrator note.
     pub note: Option<String>,
 }
 
@@ -58,7 +58,7 @@ impl AdmissionEntry {
     }
 }
 
-/// 准入登记簿。纯数据结构，持久化由 `wifisync-sys` 负责。
+/// Admission registry. Pure data structure; persistence is handled by `wifisync-sys`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdmissionRegistry {
     entries: Vec<AdmissionEntry>,
@@ -81,7 +81,8 @@ impl AdmissionRegistry {
         self.by_state(AdmissionState::Pending).len()
     }
 
-    /// 设备上报：已存在则刷新 `last_seen`（不改变状态，黑名单不会被自动重置）。
+    /// Device report: if it already exists, refresh `last_seen` (state is unchanged; the
+    /// blacklist is not reset automatically).
     pub fn register(&mut self, mut entry: AdmissionEntry) -> AdmissionState {
         if let Some(existing) = self
             .entries
@@ -111,7 +112,7 @@ impl AdmissionRegistry {
         self.set_state(device_id, AdmissionState::Rejected, now)
     }
 
-    /// 撤销批准：回到待批准状态。
+    /// Revoke an approval: move back to the pending state.
     pub fn revoke(&mut self, device_id: &str, now: crate::Timestamp) -> CoreResult<()> {
         self.set_state(device_id, AdmissionState::Pending, now)
     }
@@ -132,7 +133,7 @@ impl AdmissionRegistry {
         Ok(())
     }
 
-    /// 写入前的硬性检查：未批准一律拒绝（防绕过 LuCI）。
+    /// Hard check before writing: always reject unless approved (prevents bypassing LuCI).
     pub fn require_approved(&self, device_id: &str) -> CoreResult<()> {
         match self.find(device_id) {
             Some(entry) if entry.is_approved() => Ok(()),

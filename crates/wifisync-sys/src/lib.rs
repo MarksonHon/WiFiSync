@@ -1,10 +1,13 @@
-//! WifiSync 系统适配层。
+//! WifiSync system adaptation layer.
 //!
-//! 分工非常明确：
+//! The separation of concerns is strict:
 //!
-//! * **只读探测**：`sysfs` / `iwinfo` / `board.json` → 能力与拓扑，任何角色都允许调用；
-//! * **写入**：`uci` + `netifd`，**只由 AP 角色的写入计划驱动**（见 `wifisync_core::plan`）；
-//! * **备份/恢复**：`snapshot` / `restore`，服务启动前建基线、停止前还原。
+//! * **read-only probing**: `sysfs` / `iwinfo` / `board.json` → capabilities and topology,
+//!   callable by any role;
+//! * **writes**: `uci` + `netifd`, **driven only by the AP role's write plan**
+//!   (see `wifisync_core::plan`);
+//! * **backup/restore**: `snapshot` / `restore`, establishing the baseline before start and
+//!   restoring before stop.
 
 pub mod error;
 pub mod exec;

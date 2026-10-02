@@ -1,11 +1,11 @@
-//! iwinfo 输出采集（**只读**）：给 LuCI 展示用，不参与任何写入决策。
+//! iwinfo output collection (**read-only**): for LuCI display, never part of write decisions.
 
 use crate::error::SysResult;
 use crate::exec;
 use crate::paths::Paths;
 use serde_json::{json, Value};
 
-/// 本机无线概览（有 iwinfo 就用，没有就退回 sysfs 计数）。
+/// Local wireless overview (use iwinfo if present, otherwise fall back to the sysfs count).
 pub fn radio_status(paths: &Paths) -> SysResult<Value> {
     let phy_count = crate::sysfs::list_phys(paths).len();
     if !exec::has("iwinfo") {
@@ -13,7 +13,7 @@ pub fn radio_status(paths: &Paths) -> SysResult<Value> {
             "available": false,
             "phy_count": phy_count,
             "devices": [],
-            "note": "未安装 iwinfo，仅能给出 phy 数量",
+            "note": "iwinfo is not installed, only the phy count is available",
         }));
     }
 
@@ -24,7 +24,7 @@ pub fn radio_status(paths: &Paths) -> SysResult<Value> {
             if line.is_empty() {
                 continue;
             }
-            // 形如: wlan0     ESSID: "Home" / 形如: phy0 ...
+            // e.g. `wlan0     ESSID: "Home"` / `phy0 ...`
             let name = line
                 .split_whitespace()
                 .next()
@@ -45,7 +45,7 @@ pub fn radio_status(paths: &Paths) -> SysResult<Value> {
     }))
 }
 
-/// 采集只读状态快照（写入备份目录，用于事后排查）。
+/// Capture a read-only state snapshot (written to the backup dir for later diagnosis).
 pub fn capture_state(paths: &Paths) -> String {
     let mut out = String::new();
     let mut section = |title: &str, content: String| {

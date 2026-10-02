@@ -1,7 +1,7 @@
 name: CI
 
-# 每次推送/PR 都跑：代码质量门禁 + 用 OpenWrt 官方 SDK 工具链做多架构交叉编译。
-# 产物是可直接放进 ipk/apk 的静态（动态链接 musl）二进制，并带体积门禁。
+# Runs on every push/PR: code quality gates + multi-arch cross-compilation with the official OpenWrt SDK toolchain.
+# Artifacts are static (dynamically linked musl) binaries ready for ipk/apk packaging, with a size gate.
 
 on:
   push:
@@ -15,13 +15,13 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # OpenWrt 发布版本（25.12.x）。SDK 名字与工具链版本由 scripts/sdk-env.sh 自动解析。
+  # OpenWrt release version (25.12.x). SDK name and toolchain version are resolved by scripts/sdk-env.sh.
   WIFISYNC_OPENWRT_RELEASE: "25.12.5"
-  # 二进制体积门禁：3 MiB（小 flash 设备需要）
+  # Binary size gate: 3 MiB (needed by small-flash devices)
   WIFISYNC_MAX_BINARY_BYTES: "3145728"
 
 jobs:
-  # ── 1. Rust 质量门禁 ──────────────────────────────────────────────────────
+  # ── 1. Rust quality gates ──────────────────────────────────────────────────────
   lint-test:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
@@ -39,13 +39,13 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
 
-      - name: clippy（-D warnings）
+      - name: clippy (-D warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: 单元测试（角色矩阵 / 建桥策略 / 备份 / 故障恢复 / 零侵入不变量）
+      - name: Unit tests (role matrix / bridging strategy / backup / failover / zero-intrusion invariants)
         run: cargo test --workspace --locked
 
-      - name: 端到端冒烟测试（假 OpenWrt 根目录）
+      - name: End-to-end smoke test (fake OpenWrt root)
         run: |
           set -eu
           ROOT=$(mktemp -d)
@@ -67,39 +67,39 @@ jobs:
           BIN=./target/debug/wifisync
           cargo build --locked -p wifisync
 
-          # 非 AP 角色：写入计划必须为空（零侵入不变量）
+          # Non-AP role: the written plan must be empty (zero-intrusion invariant)
           PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
           echo "$PLAN"
           echo "$PLAN" | grep -q '"empty": true'
 
-          # 纯 AP：必须产生网桥与无线写入
+          # Pure AP: must produce bridge and wireless writes
           sed -i "s/option roles 'controller gateway'/option roles 'ap'/" "$ROOT/etc/config/wifisync"
           PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
           echo "$PLAN" | grep -q '"name": "br-lan"'
           echo "$PLAN" | grep -q 'ieee80211r'
 
-          # 备份生命周期：创建 + 校验
+          # Backup lifecycle: create + verify
           WIFISYNC_ROOT="$ROOT" "$BIN" backup create >/dev/null
           WIFISYNC_ROOT="$ROOT" "$BIN" backup verify | grep -q '"ok": true'
 
-  # ── 2. Shell / JSON 静态检查 ──────────────────────────────────────────────
+  # ── 2. Shell / JSON static checks ──────────────────────────────────────────────
   lint-scripts:
     name: shellcheck + json
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 shellcheck
+      - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
-      - name: shellcheck（构建脚本 / init.d / rpcd 桥）
+      - name: shellcheck (build scripts / init.d / rpcd bridge)
         run: |
           shellcheck -x -S warning \
             scripts/*.sh \
             openwrt/package/wifisync/files/etc/init.d/wifisync \
             openwrt/package/wifisync/files/usr/libexec/rpcd/wifisync
 
-      - name: JSON 语法检查（LuCI 菜单/ACL、rpcd ACL）
+      - name: JSON syntax check (LuCI menu/ACL, rpcd ACL)
         run: |
           set -eu
           for f in $(find luci openwrt -name '*.json'); do
@@ -107,7 +107,7 @@ jobs:
             python3 -m json.tool "$f" > /dev/null
           done
 
-      - name: LuCI JS 语法检查（node --check）
+      - name: LuCI JS syntax check (node --check)
         run: |
           set -eu
           for f in $(find luci -name '*.js'); do
@@ -115,7 +115,114 @@ jobs:
             node --check "$f"
           done
 
-  # ── 3. 多架构交叉编译（复用 OpenWrt SDK 工具链）────────────────────────────
+      - name: LuCI translation coverage check (view _() strings vs po/*)
+        run: |
+          set -eu
+          cat > /tmp/wifisync-i18n-check.js <<'EOF'
+          const fs = require('fs'), path = require('path');
+
+          const root = 'luci/luci-app-wifisync';
+          const viewDir = path.join(root, 'htdocs/luci-static/resources/view');
+
+          function walk(dir, suffix, list = []) {
+          	for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          		const p = path.join(dir, e.name);
+          		if (e.isDirectory()) walk(p, suffix, list);
+          		else if (e.name.endsWith(suffix)) list.push(p);
+          	}
+          	return list;
+          }
+
+          const used = new Set();
+          for (const file of walk(viewDir, '.js')) {
+          	const src = fs.readFileSync(file, 'utf8');
+          	const re = /_\(\s*'((?:[^'\\]|\\.)*)'/g;
+          	let m;
+          	while ((m = re.exec(src))) used.add(m[1].replace(/\\'/g, "'"));
+          }
+
+          const poRoot = path.join(root, 'po');
+          const langs = fs.existsSync(poRoot)
+          	? fs.readdirSync(poRoot).filter(d => d !== 'templates')
+          	: [];
+
+          let failed = false;
+          for (const lang of langs) {
+          	for (const po of walk(path.join(poRoot, lang), '.po')) {
+          		const ids = new Set();
+          		for (const line of fs.readFileSync(po, 'utf8').split(/\r?\n/)) {
+          			const m = /^msgid "((?:[^"\\]|\\.)*)"$/.exec(line);
+          			if (m) ids.add(JSON.parse('"' + m[1] + '"'));
+          		}
+          		const missing = [...used].filter(s => !ids.has(s));
+          		if (missing.length) {
+          			failed = true;
+          			console.error(`${po}: missing ${missing.length} msgid(s):`);
+          			for (const s of missing) console.error('  ' + JSON.stringify(s));
+          		}
+          		else {
+          			console.log(`${po}: OK (${used.size} view strings covered)`);
+          		}
+          	}
+          }
+
+          process.exit(failed ? 1 : 0);
+          EOF
+          node /tmp/wifisync-i18n-check.js
+
+      - name: Backend message keys vs front-end table consistency check (Rust Message::new vs common.js MESSAGES)
+        run: |
+          set -eu
+          cat > /tmp/wifisync-message-keys.js <<'EOF'
+          const fs = require('fs'), path = require('path');
+
+          const repo = process.cwd();
+          const commonJs = path.join(repo, 'luci/luci-app-wifisync/htdocs/luci-static/resources/view/wifisync/common.js');
+
+          function walk(dir, suffix, list = []) {
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+              const p = path.join(dir, e.name);
+              if (e.isDirectory()) walk(p, suffix, list);
+              else if (e.name.endsWith(suffix)) list.push(p);
+            }
+            return list;
+          }
+
+          const rustKeys = new Set();
+          for (const file of walk(path.join(repo, 'crates'), '.rs')) {
+            const src = fs.readFileSync(file, 'utf8');
+            const re = /Message::new\(\s*"([a-z0-9_.]+)"/g;
+            let m;
+            while ((m = re.exec(src))) rustKeys.add(m[1]);
+          }
+
+          const js = fs.readFileSync(commonJs, 'utf8');
+          const table = /var MESSAGES = \{([\s\S]*?)\n\};/.exec(js);
+
+          if (!table) {
+            console.error('MESSAGES table not found in common.js');
+            process.exit(1);
+          }
+
+          const jsKeys = new Set();
+          for (const m of table[1].matchAll(/^\t'([a-z0-9_.]+)':/gm)) jsKeys.add(m[1]);
+
+          const missingInJs = [...rustKeys].filter(k => !jsKeys.has(k)).sort();
+          const unusedInRust = [...jsKeys].filter(k => !rustKeys.has(k)).sort();
+
+          console.log(`backend message keys: ${rustKeys.size}, front-end entries: ${jsKeys.size}`);
+
+          if (missingInJs.length || unusedInRust.length) {
+            if (missingInJs.length) console.error('missing in common.js MESSAGES: ' + missingInJs.join(', '));
+            if (unusedInRust.length) console.error('not emitted by the backend: ' + unusedInRust.join(', '));
+            process.exit(1);
+          }
+
+          console.log('backend/front-end message keys: OK');
+          EOF
+          node /tmp/wifisync-message-keys.js
+
+  # ── 3. Multi-arch cross-compilation (reusing the OpenWrt SDK toolchain) ────────────────────────────
   cross-build:
     name: ${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -123,7 +230,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # OpenWrt 25.12 中全部 x86 与 ARM64 包架构（映射见 scripts/openwrt-arch.sh）
+        # All x86 and ARM64 package architectures in OpenWrt 25.12 (mapping in scripts/openwrt-arch.sh)
         arch:
           - x86_64
           - i386_pentium4
@@ -137,30 +244,30 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: 安装 zstd（解压 SDK 需要）
+      - name: Install zstd (needed to extract the SDK)
         run: sudo apt-get update && sudo apt-get install -y zstd file
 
-      - name: 目标三元组
+      - name: Target triple
         id: info
         run: |
           TRIPLE=$(scripts/openwrt-arch.sh ${{ matrix.arch }} triple)
           echo "triple=$TRIPLE" >> "$GITHUB_OUTPUT"
           rustup target add "$TRIPLE"
 
-      - name: 交叉编译（SDK musl 工具链）
+      - name: Cross-compile (SDK musl toolchain)
         run: scripts/build-musl.sh ${{ matrix.arch }}
 
-      - name: 体积门禁
+      - name: Size gate
         run: |
           set -eu
           SIZE=$(wc -c < "dist/${{ matrix.arch }}/wifisync")
-          echo "二进制大小：$SIZE 字节（上限 $WIFISYNC_MAX_BINARY_BYTES）"
+          echo "binary size: $SIZE bytes (limit $WIFISYNC_MAX_BINARY_BYTES)"
           if [ "$SIZE" -gt "$WIFISYNC_MAX_BINARY_BYTES" ]; then
-            echo "::error::二进制超过体积门禁，请检查是否引入了过大依赖"
+            echo "::error::binary exceeds the size gate, check for oversized dependencies"
             exit 1
           fi
 
-      - name: 产物信息
+      - name: Artifact info
         run: cat "dist/${{ matrix.arch }}/build-info.json"
 
       - uses: actions/upload-artifact@v4
@@ -169,7 +276,7 @@ jobs:
           path: dist/${{ matrix.arch }}/
           if-no-files-found: error
 
-  # ── 4. LuCI 包构建（用官方 gh-action-sdk 验证 luci feed 包结构）────────────
+  # ── 4. LuCI package build (validate the luci feed package layout with the official gh-action-sdk) ────────────
   luci-package:
     name: luci-app-wifisync (${{ matrix.arch }})
     runs-on: ubuntu-latest
@@ -183,7 +290,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 用官方 SDK 容器构建 LuCI 应用
+      - name: Build the LuCI app with the official SDK container
         uses: openwrt/gh-action-sdk@main
         env:
           ARCH: ${{ matrix.arch }}-25.12.5
@@ -193,7 +300,7 @@ jobs:
           IGNORE_ERRORS: "0"
           V: s
 
-      - name: 收集产物
+      - name: Collect artifacts
         if: always()
         run: |
           mkdir -p dist/luci-${{ matrix.arch }}

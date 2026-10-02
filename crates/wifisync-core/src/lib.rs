@@ -1,17 +1,17 @@
-//! WifiSync 核心纯逻辑。
+//! WifiSync core pure logic.
 //!
-//! 这一层**不做任何系统调用**（不读写 `/etc/config`、不执行外部命令），
-//! 因此可以在宿主机上完整单测。所有“要不要动网络、动哪些”的判断都集中在这里，
-//! 这是本项目「默认零侵入」原则的落点：
+//! This layer makes **no system calls** (it does not read/write `/etc/config` and does not run
+//! external commands), so it can be fully unit-tested on a host. Every decision about "whether to
+//! touch the network, and which parts" lives here:
 //!
-//! * [`role`]：角色集合与建桥策略（`enable_bridge = ap && !gateway && !controller`）
-//! * [`bridge`]：网桥规划（列表结构，预留多网桥 / VLAN）
-//! * [`wifi_source`]：Wi-Fi 信息三来源（控制器自身 / 网关 / 自定义）
-//! * [`profile`]：`NetworkProfile`（网络档案，Controller 下发给 AP）
-//! * [`admission`]：新 AP 准入状态机
-//! * [`backup`]：初始基线 / 快照 / 恢复计划
-//! * [`failsafe`]：死手定时器 + 心跳看门狗
-//! * [`plan`]：把上面所有东西合成一份「写入计划」（非 AP 角色恒为空）
+//! * [`role`]: role set and bridging policy (`enable_bridge = ap && !gateway && !controller`)
+//! * [`bridge`]: bridge planning (list structure, reserving room for multi-bridge / VLAN)
+//! * [`wifi_source`]: the three Wi-Fi information sources (controller itself / gateway / custom)
+//! * [`profile`]: `NetworkProfile` (network profile pushed by the Controller to the AP)
+//! * [`admission`]: new AP admission state machine
+//! * [`backup`]: initial baseline / snapshots / restore plan
+//! * [`failsafe`]: dead-man timer + heartbeat watchdog
+//! * [`plan`]: combine all of the above into a single "write plan" (always empty for non-AP roles)
 
 pub mod admission;
 pub mod backup;
@@ -20,6 +20,7 @@ pub mod capability;
 pub mod config;
 pub mod error;
 pub mod failsafe;
+pub mod message;
 pub mod plan;
 pub mod profile;
 pub mod role;
@@ -27,12 +28,14 @@ pub mod uci_file;
 pub mod wifi_source;
 
 pub use error::{CoreError, CoreResult};
+pub use message::Message;
 
-/// 程序版本（由 Cargo 注入，用于写入备份清单与状态接口）。
+/// Program version (injected by Cargo, written into backup manifests and the status interface).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 缺省网桥名；代码中不假设只有一个网桥，此值仅作为默认值。
+/// Default bridge name; the code does not assume a single bridge, so this value is only a default.
 pub const DEFAULT_BRIDGE: &str = "br-lan";
 
-/// 统一的时间取值入口：核心层不依赖系统时钟实现，调用方传入秒级时间戳。
+/// Unified time entry point: the core layer does not depend on a system clock, and the caller
+/// passes a second-resolution timestamp.
 pub type Timestamp = i64;

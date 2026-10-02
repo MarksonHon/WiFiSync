@@ -1,6 +1,6 @@
 [package]
 name = "wifisync"
-description = "WifiSync 单文件可执行程序：daemon / ctl / rpcd(ubus) 三种模式"
+description = "WifiSync single-binary program: daemon / ctl / rpcd (ubus) modes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

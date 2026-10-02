@@ -1,6 +1,6 @@
-//! 只读能力探测：`/sys/class/net`、`/sys/class/ieee80211`、`/etc/board.json`。
+//! Read-only capability probing: `/sys/class/net`, `/sys/class/ieee80211`, `/etc/board.json`.
 //!
-//! 这里**只读不写**，任何角色都可以安全调用。
+//! This module is **read-only, never writes**, so any role can call it safely.
 
 use crate::error::SysResult;
 use crate::paths::Paths;
@@ -8,14 +8,14 @@ use serde_json::Value;
 use std::path::Path;
 use wifisync_core::capability::{Capabilities, PortInfo, PortKind, RadioInfo};
 
-/// 读取 `/etc/board.json`（OpenWrt 的设备描述文件）。
+/// Read `/etc/board.json` (OpenWrt's device description file).
 pub fn read_board_json(paths: &Paths) -> Option<Value> {
     let path = paths.root().join("etc/board.json");
     let text = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
-/// 是否有无线硬件。
+/// Whether wireless hardware is present.
 pub fn has_wireless(paths: &Paths) -> bool {
     let dir = paths.root().join("sys/class/ieee80211");
     std::fs::read_dir(dir)
@@ -23,7 +23,7 @@ pub fn has_wireless(paths: &Paths) -> bool {
         .unwrap_or(false)
 }
 
-/// 枚举无线 phy（`phy0`, `phy1`, ...）。
+/// Enumerate wireless phys (`phy0`, `phy1`, ...).
 pub fn list_phys(paths: &Paths) -> Vec<String> {
     let dir = paths.root().join("sys/class/ieee80211");
     let mut names: Vec<String> = Vec::new();
@@ -38,12 +38,12 @@ pub fn list_phys(paths: &Paths) -> Vec<String> {
     names
 }
 
-/// 是否为无线接口。
+/// Whether this is a wireless interface.
 fn is_wireless_iface(net_path: &Path) -> bool {
     net_path.join("phy80211").exists()
 }
 
-/// 已经是网桥的接口不应再作为成员端口。
+/// Interfaces that are already bridges must not be used as member ports again.
 fn is_bridge_iface(net_path: &Path) -> bool {
     net_path.join("bridge").exists()
 }
@@ -54,7 +54,7 @@ fn read_flag(net_path: &Path, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// 枚举物理网口（排除 lo / 无线 / 已有网桥）。
+/// Enumerate physical network ports (excluding lo / wireless / existing bridges).
 pub fn list_net_ports(paths: &Paths, board: Option<&Value>) -> Vec<PortInfo> {
     let net_dir = paths.root().join("sys/class/net");
     let mut ports = Vec::new();
@@ -74,7 +74,7 @@ pub fn list_net_ports(paths: &Paths, board: Option<&Value>) -> Vec<PortInfo> {
         if is_wireless_iface(&net_path) || is_bridge_iface(&net_path) {
             continue;
         }
-        // 只接受有 device 链接的真实设备（虚拟接口如 tun/ppp 会被排除）
+        // Only accept real devices with a `device` link (virtual ifaces like tun/ppp are excluded)
         if !net_path.join("device").exists() && !net_path.join("dsa").exists() {
             continue;
         }
@@ -92,7 +92,7 @@ pub fn list_net_ports(paths: &Paths, board: Option<&Value>) -> Vec<PortInfo> {
     ports
 }
 
-/// 从 board.json 推断端口角色（`network.lan.device` / `network.wan.device` / `*.ports`）。
+/// Infer a port's role from board.json (`network.lan.device` / `network.wan.device` / `*.ports`).
 pub fn port_kind_from_board(board: &Value, name: &str) -> PortKind {
     for (key, kind) in [("wan", PortKind::Wan), ("lan", PortKind::Lan)] {
         let Some(node) = board.get("network").and_then(|n| n.get(key)) else {
@@ -120,7 +120,7 @@ fn value_matches(value: &Value, name: &str) -> bool {
     }
 }
 
-/// 读取某个网桥当前的成员（sysfs 的 `brif` 目录）。
+/// Read a bridge's current members (the sysfs `brif` directory).
 pub fn bridge_members(paths: &Paths, bridge: &str) -> Vec<String> {
     let dir = paths.root().join("sys/class/net").join(bridge).join("brif");
     let mut members = Vec::new();
@@ -135,10 +135,11 @@ pub fn bridge_members(paths: &Paths, bridge: &str) -> Vec<String> {
     members
 }
 
-/// 检测是否安装了**完整版** wpad（`wpad-basic*` 不含 802.11k/v/r）。
+/// Detect whether the **full** wpad is installed (`wpad-basic*` lacks 802.11k/v/r).
 ///
-/// 做法：在二进制里找 `mobility_domain` 字符串 —— 这是 hostapd 完整版的编译期特性，
-/// 比解析 opkg/apk 数据库更稳（两种包管理器都适用）。
+/// Method: look for the `mobility_domain` string in the binaries — it is a compile-time
+/// feature of the full hostapd and is more robust than parsing the opkg/apk database
+/// (works with both package managers).
 pub fn wpad_full(paths: &Paths) -> bool {
     let candidates = [
         paths.root().join("usr/sbin/wpad"),
@@ -164,7 +165,7 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// 是否支持 VLAN filtering（DSA 设备普遍支持）。
+/// Whether VLAN filtering is supported (most DSA devices support it).
 pub fn vlan_capable(paths: &Paths, board: Option<&Value>) -> bool {
     if let Some(board) = board {
         if board.get("switch").is_some_and(|s| {
@@ -175,7 +176,7 @@ pub fn vlan_capable(paths: &Paths, board: Option<&Value>) -> bool {
             return true;
         }
     }
-    // 有 DSA 端口就当支持
+    // Any DSA port counts as supported
     let net_dir = paths.root().join("sys/class/net");
     if let Ok(entries) = std::fs::read_dir(net_dir) {
         for entry in entries.flatten() {
@@ -187,7 +188,7 @@ pub fn vlan_capable(paths: &Paths, board: Option<&Value>) -> bool {
     false
 }
 
-/// 从 `/etc/config/wireless` 解析 radio 列表（uci 是权威来源，顺序即 radioN）。
+/// Parse the radio list from `/etc/config/wireless` (uci is authoritative; order gives radioN).
 pub fn radios_from_uci(wireless_text: &str) -> Vec<RadioInfo> {
     let sections = wifisync_core::uci_file::parse(wireless_text);
     let mut radios = Vec::new();
@@ -207,19 +208,21 @@ pub fn radios_from_uci(wireless_text: &str) -> Vec<RadioInfo> {
             name: section.name.clone(),
             band,
             channel,
-            // 具体能力由 wpad + 驱动决定，这里先标记，最终值在 `capabilities()` 里统一修正
+            // Actual capabilities depend on wpad + driver; mark a provisional value here
+            // and fix it in `capabilities()`.
             supports_kvr: section.option("disabled") != Some("1"),
         });
     }
     radios
 }
 
-/// 探测完整能力快照。
+/// Probe a full capability snapshot.
 ///
-/// **无线存在性的权威来源是内核无线子系统**（`/sys/class/ieee80211/*`），
-/// 而不是 `/etc/config/wireless`：残留的 uci 配置不能证明设备真的有无线模块
-/// （需求 3 要求「没有无线模块就禁止 AP」，这里必须保守）。
-/// uci 配置只用来给 phy 补充 radio 名/频段等展示信息。
+/// **The authoritative source for wireless presence is the kernel wireless subsystem**
+/// (`/sys/class/ieee80211/*`), not `/etc/config/wireless`: stale uci config cannot prove the
+/// device really has a wireless module (requirement 3 says "no wireless module means no AP",
+/// so we must be conservative here). uci config only supplements the phy with display info
+/// such as radio name/band.
 pub fn capabilities(paths: &Paths, wireless_text: Option<&str>) -> SysResult<Capabilities> {
     let board = read_board_json(paths);
     let phys = list_phys(paths);
@@ -231,12 +234,12 @@ pub fn capabilities(paths: &Paths, wireless_text: Option<&str>) -> SysResult<Cap
             .map(radios_from_uci)
             .unwrap_or_default()
             .into_iter()
-            // 只保留数量与 phy 对得上的那些（多余的是残留配置）
+            // Keep only as many as match the phy count (the extras are stale config)
             .take(phys.len())
             .collect()
     };
     if radios.is_empty() && !phys.is_empty() {
-        // 没有 uci 配置时退回 sysfs 枚举（数量可靠，名称是 phyN）
+        // Without uci config, fall back to sysfs enumeration (count is reliable, names are phyN)
         radios = phys
             .iter()
             .map(|phy| RadioInfo {
@@ -344,7 +347,7 @@ config wifi-device 'radio1'
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 需求 3 的关键回归：残留的 uci 无线配置**不能**证明设备有无线模块。
+    /// Requirement 3 regression: stale uci wireless config must **not** prove wireless hardware.
     #[test]
     fn stale_uci_config_does_not_fake_wireless_hardware() {
         let tmp = std::env::temp_dir().join("wifisync-test-caps-stale");
@@ -355,7 +358,7 @@ config wifi-device 'radio1'
         let caps = capabilities(&paths, Some(stale)).unwrap();
         assert!(
             !caps.has_wifi(),
-            "没有 /sys/class/ieee80211/* 时必须判定为无无线硬件"
+            "without /sys/class/ieee80211/* the device must be detected as having no wireless hardware"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

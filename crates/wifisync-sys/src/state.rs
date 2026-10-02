@@ -1,6 +1,7 @@
-//! 运行时状态：device-id、准入登记簿、档案版本、脏标记。
+//! Runtime state: device-id, admission registry, profile version, dirty marker.
 //!
-//! 状态文件一律用「临时文件 + rename」原子写入，避免掉电写坏。
+//! State files are always written atomically with "temp file + rename", so a power loss
+//! cannot corrupt them.
 
 use crate::error::SysResult;
 use crate::paths::Paths;
@@ -17,7 +18,7 @@ impl StateStore {
         Self { paths }
     }
 
-    /// 读取（或首次生成）设备 ID。
+    /// Read (or generate on first use) the device ID.
     pub fn device_id(&self) -> SysResult<String> {
         let path = self.paths.device_id_file();
         if let Ok(text) = std::fs::read_to_string(&path) {
@@ -32,7 +33,7 @@ impl StateStore {
         Ok(id)
     }
 
-    /// 读取状态 JSON（不存在则返回默认结构）。
+    /// Read the state JSON (returns the default structure when absent).
     pub fn load(&self) -> SysResult<Value> {
         let path = self.paths.state_file();
         match std::fs::read_to_string(path) {
@@ -75,7 +76,8 @@ impl StateStore {
             .unwrap_or(0))
     }
 
-    /// 递增并返回新的档案版本号（下发给 AP 的 `NetworkProfile.version`）。
+    /// Increment and return the new profile version
+    /// (issued to the AP as `NetworkProfile.version`).
     pub fn bump_profile_version(&self) -> SysResult<u64> {
         let mut value = self.load()?;
         let next = value
@@ -88,7 +90,7 @@ impl StateStore {
         Ok(next)
     }
 
-    // ── 脏标记：异常退出（kill -9 / 断电）后由下次启动识别 ──────────────────
+    // ── Dirty marker: recognized on next start after an abnormal exit (kill -9 / power loss) ──────────────────
 
     pub fn mark_dirty(&self, reason: &str) -> SysResult<()> {
         self.paths.ensure_dir(&self.paths.run_dir())?;
@@ -110,7 +112,7 @@ impl StateStore {
     }
 }
 
-/// 从 `/dev/urandom` 取随机字节并转十六进制。
+/// Read random bytes from `/dev/urandom` and encode them as hex.
 pub fn random_hex(bytes: usize) -> SysResult<String> {
     use std::io::Read;
     let mut buf = vec![0u8; bytes];
@@ -119,7 +121,7 @@ pub fn random_hex(bytes: usize) -> SysResult<String> {
     Ok(buf.iter().map(|b| format!("{:02x}", b)).collect())
 }
 
-/// 原子写文件（同目录临时文件 + rename）。
+/// Atomically write a file (temp file in the same directory + rename).
 pub fn write_atomic(path: &std::path::Path, content: &[u8]) -> SysResult<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
