@@ -1,0 +1,23 @@
+[package]
+name = "wifisync"
+description = "WifiSync 单文件可执行程序：daemon / ctl / rpcd(ubus) 三种模式"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "wifisync"
+path = "src/main.rs"
+
+[dependencies]
+wifisync-core = { workspace = true }
+wifisync-sys = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+chacha20poly1305 = { workspace = true }
+libc = { workspace = true }

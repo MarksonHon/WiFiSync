@@ -1,0 +1,57 @@
+# WifiSync 自身配置（不含任何被管理的 network/wireless 设置）
+#
+# 重要：本文件只描述"WifiSync 自己想做什么"。
+#   * Gateway 角色：只记录用户选定的 LAN 接口，不修改网络
+#   * Controller 角色：只做新 AP 准入与网络信息下发，不修改本机网络
+#   * AP 角色：才会应用下发的 Wi-Fi / 网桥信息（且必须已获准入）
+
+config wifisync 'main'
+	# 保存用户是否显式设置过角色。为 0 时，首次启动按硬件能力取默认值：
+	# 有无线 ⇒ "controller ap gateway"；无无线 ⇒ "controller gateway"（自动取消 AP）
+	option roles_configured '0'
+	option roles 'controller ap gateway'
+	option device_id ''
+	option bridge_name 'br-lan'
+	# managed_only：只还原 WifiSync 改动过的键；full：按基线整体覆盖
+	option restore_mode 'managed_only'
+	# AP 的同步模式：auto（跟随 Controller 下发）/ local_override（本地临时覆盖）
+	option sync_mode 'auto'
+	option local_wifi_change_confirmed '0'
+	# Gateway 角色专用：用户选定的 LAN 接口（仅用于识别与探测）
+	list gateway_lan_ifaces ''
+	# 连通性探测目标（程序只做探测，不会修改路由/NAT/防火墙）
+	option gateway_endpoint ''
+	option controller_endpoint ''
+
+# Wi-Fi 信息源：controller_self（控制器自身）/ gateway（只读拉取网关）/ custom（自定义）
+config wifi_source 'source'
+	option kind 'controller_self'
+	option gateway_endpoint ''
+	option gateway_credential_ref ''
+	option allow_fallback '0'
+
+# 仅当 kind='custom' 时生效。
+# 注意：若本设备同时承担 AP 角色（AP 与 Controller 同设备），
+# 应用自定义信息会修改本机无线配置，需要用户显式确认（local_wifi_change_confirmed=1）。
+config custom_wifi 'custom'
+	option ssid 'WifiSync'
+	option auth 'sae-mixed'
+	option psk_ref 'custom'
+	option band '5g'
+	option channel ''
+	option hidden '0'
+	option mobility_domain '1a2b'
+	option ieee80211k '1'
+	option ieee80211v '1'
+	option ieee80211r '1'
+	option ft_over_ds '1'
+	option ft_psk_generate_local '1'
+
+# 可选：连不上 Controller / Gateway 时恢复设备默认网络（默认关闭）
+config failsafe 'failsafe'
+	option enabled '0'
+	option apply_confirm_secs '90'
+	option link_timeout_secs '300'
+	option action 'revert'
+	option keep_ssid '0'
+	option heartbeat_endpoint ''

@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# WifiSync 服务脚本
+#
+# 生命周期纪律（需求 11）：
+#   * 启动：守护进程自己先建立/校验初始化基线，再开始工作（缺基线则拒绝启动）
+#   * 停止：守护进程收到 SIGTERM 后同步恢复原有网络；本脚本在其后再补一次幂等恢复，
+#           避免 procd 先 SIGKILL 导致恢复没做完。
+
+START=99
+STOP=01
+USE_PROCD=1
+
+PROG=/usr/bin/wifisync
+NO_RESTORE_FLAG=/etc/wifisync/no-restore-on-stop
+
+start_service() {
+	procd_open_instance
+	procd_set_param command "$PROG" daemon
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param file /etc/config/wifisync
+	procd_set_param limits nofile="1024 1024"
+	procd_close_instance
+}
+
+stop_service() {
+	# 兜底恢复：幂等，已经恢复过也不会造成重复改动
+	[ -x "$PROG" ] || return 0
+	if [ -f "$NO_RESTORE_FLAG" ]; then
+		logger -t wifisync "检测到 $NO_RESTORE_FLAG，跳过停止前恢复"
+		return 0
+	fi
+	"$PROG" restore >/dev/null 2>&1 || \
+		logger -t wifisync "停止前恢复失败，请检查 /etc/wifisync/backup/initial"
+	return 0
+}
+
+service_triggers() {
+	procd_add_reload_trigger wifisync
+}

@@ -1,0 +1,208 @@
+name: CI
+
+# 每次推送/PR 都跑：代码质量门禁 + 用 OpenWrt 官方 SDK 工具链做多架构交叉编译。
+# 产物是可直接放进 ipk/apk 的静态（动态链接 musl）二进制，并带体积门禁。
+
+on:
+  push:
+    branches: [ main, master, dev ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # OpenWrt 发布版本（25.12.x）。SDK 名字与工具链版本由 scripts/sdk-env.sh 自动解析。
+  WIFISYNC_OPENWRT_RELEASE: "25.12.5"
+  # 二进制体积门禁：3 MiB（小 flash 设备需要）
+  WIFISYNC_MAX_BINARY_BYTES: "3145728"
+
+jobs:
+  # ── 1. Rust 质量门禁 ──────────────────────────────────────────────────────
+  lint-test:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy（-D warnings）
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: 单元测试（角色矩阵 / 建桥策略 / 备份 / 故障恢复 / 零侵入不变量）
+        run: cargo test --workspace --locked
+
+      - name: 端到端冒烟测试（假 OpenWrt 根目录）
+        run: |
+          set -eu
+          ROOT=$(mktemp -d)
+          mkdir -p "$ROOT/etc/config" "$ROOT/sys/class/ieee80211/phy0"
+          mkdir -p "$ROOT/sys/class/net/lan1/device" "$ROOT/sys/class/net/wan/device"
+          cat > "$ROOT/etc/config/wireless" <<'EOF'
+          config wifi-device 'radio0'
+          	option type 'mac80211'
+          	option channel '36'
+          	option band '5g'
+          EOF
+          printf '{"network":{"lan":{"device":"lan1"},"wan":{"device":"wan"}}}' > "$ROOT/etc/board.json"
+          cat > "$ROOT/etc/config/wifisync" <<'EOF'
+          config wifisync 'main'
+          	option roles_configured '1'
+          	option roles 'controller gateway'
+          EOF
+
+          BIN=./target/debug/wifisync
+          cargo build --locked -p wifisync
+
+          # 非 AP 角色：写入计划必须为空（零侵入不变量）
+          PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
+          echo "$PLAN"
+          echo "$PLAN" | grep -q '"empty": true'
+
+          # 纯 AP：必须产生网桥与无线写入
+          sed -i "s/option roles 'controller gateway'/option roles 'ap'/" "$ROOT/etc/config/wifisync"
+          PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
+          echo "$PLAN" | grep -q '"name": "br-lan"'
+          echo "$PLAN" | grep -q 'ieee80211r'
+
+          # 备份生命周期：创建 + 校验
+          WIFISYNC_ROOT="$ROOT" "$BIN" backup create >/dev/null
+          WIFISYNC_ROOT="$ROOT" "$BIN" backup verify | grep -q '"ok": true'
+
+  # ── 2. Shell / JSON 静态检查 ──────────────────────────────────────────────
+  lint-scripts:
+    name: shellcheck + json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: shellcheck（构建脚本 / init.d / rpcd 桥）
+        run: |
+          shellcheck -x -S warning \
+            scripts/*.sh \
+            openwrt/package/wifisync/files/etc/init.d/wifisync \
+            openwrt/package/wifisync/files/usr/libexec/rpcd/wifisync
+
+      - name: JSON 语法检查（LuCI 菜单/ACL、rpcd ACL）
+        run: |
+          set -eu
+          for f in $(find luci openwrt -name '*.json'); do
+            echo "check $f"
+            python3 -m json.tool "$f" > /dev/null
+          done
+
+      - name: LuCI JS 语法检查（node --check）
+        run: |
+          set -eu
+          for f in $(find luci -name '*.js'); do
+            echo "check $f"
+            node --check "$f"
+          done
+
+  # ── 3. 多架构交叉编译（复用 OpenWrt SDK 工具链）────────────────────────────
+  cross-build:
+    name: ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    needs: [ lint-test, lint-scripts ]
+    strategy:
+      fail-fast: false
+      matrix:
+        # OpenWrt 25.12 中全部 x86 与 ARM64 包架构（映射见 scripts/openwrt-arch.sh）
+        arch:
+          - x86_64
+          - i386_pentium4
+          - i386_pentium-mmx
+          - aarch64_generic
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 zstd（解压 SDK 需要）
+        run: sudo apt-get update && sudo apt-get install -y zstd file
+
+      - name: 目标三元组
+        id: info
+        run: |
+          TRIPLE=$(scripts/openwrt-arch.sh ${{ matrix.arch }} triple)
+          echo "triple=$TRIPLE" >> "$GITHUB_OUTPUT"
+          rustup target add "$TRIPLE"
+
+      - name: 交叉编译（SDK musl 工具链）
+        run: scripts/build-musl.sh ${{ matrix.arch }}
+
+      - name: 体积门禁
+        run: |
+          set -eu
+          SIZE=$(wc -c < "dist/${{ matrix.arch }}/wifisync")
+          echo "二进制大小：$SIZE 字节（上限 $WIFISYNC_MAX_BINARY_BYTES）"
+          if [ "$SIZE" -gt "$WIFISYNC_MAX_BINARY_BYTES" ]; then
+            echo "::error::二进制超过体积门禁，请检查是否引入了过大依赖"
+            exit 1
+          fi
+
+      - name: 产物信息
+        run: cat "dist/${{ matrix.arch }}/build-info.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifisync-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/
+          if-no-files-found: error
+
+  # ── 4. LuCI 包构建（用官方 gh-action-sdk 验证 luci feed 包结构）────────────
+  luci-package:
+    name: luci-app-wifisync (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    needs: lint-scripts
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ x86_64, aarch64_cortex-a53 ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 用官方 SDK 容器构建 LuCI 应用
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-25.12.5
+          FEEDNAME: wifisync
+          FEED_DIR: ${{ github.workspace }}
+          PACKAGES: luci-app-wifisync
+          IGNORE_ERRORS: "0"
+          V: s
+
+      - name: 收集产物
+        if: always()
+        run: |
+          mkdir -p dist/luci-${{ matrix.arch }}
+          find bin -name 'luci-app-wifisync*.apk' -o -name 'luci-app-wifisync*.ipk' \
+            | xargs -r -I{} cp {} dist/luci-${{ matrix.arch }}/ || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: luci-app-wifisync-${{ matrix.arch }}
+          path: dist/luci-${{ matrix.arch }}/
+          if-no-files-found: warn

@@ -1,0 +1,128 @@
+name: OpenWrt packages
+
+# 生成**官方格式**的安装包（25.12 为 .apk，旧版为 .ipk）。
+#
+# 这条路完全照 OpenWrt 官方 Rust 包的流程走：
+#   下载官方 SDK → feeds update/install（拿到 feeds/packages/lang/rust）
+#   → make package/wifisync/compile → bin/packages/<arch>/*.apk
+#
+# 注意：它会在 SDK 里从源码构建 `rust/host`（rustc 引导），
+# 单架构通常需要 30–90 分钟，因此只在手动触发 / 定时任务里跑。
+# 日常提交用 ci.yml 的 cross-build（快得多，等价于官方工具链编译）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "只构建指定架构（留空 = 全部 x86/ARM64）"
+        required: false
+        default: ""
+  schedule:
+    # 每月 1 号 UTC 03:00 跑一次，追踪 OpenWrt feed 变化
+    - cron: "0 3 1 * *"
+
+concurrency:
+  group: openwrt-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  WIFISYNC_OPENWRT_RELEASE: "25.12.5"
+
+jobs:
+  package:
+    name: ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86_64
+          - i386_pentium4
+          - i386_pentium-mmx
+          - aarch64_generic
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 过滤（手动指定架构时）
+        id: filter
+        run: |
+          WANTED="${{ github.event.inputs.arch }}"
+          if [ -n "$WANTED" ] && [ "$WANTED" != "${{ matrix.arch }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 安装依赖
+        if: steps.filter.outputs.skip != 'true'
+        run: sudo apt-get update && sudo apt-get install -y zstd file build-essential rsync
+
+      - name: 下载官方 SDK 并加入本仓库作为 feed
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          TARGET=$(scripts/openwrt-arch.sh ${{ matrix.arch }} target)
+          . scripts/sdk-env.sh "$TARGET"
+          cd "$WIFISYNC_SDK"
+
+          # 本仓库即 feed（src-link 方式，不复制源码）
+          echo "src-link wifisync $GITHUB_WORKSPACE" >> feeds.conf.default
+          cp feeds.conf.default feeds.conf
+          cat feeds.conf
+
+          # 官方 feed（含 feeds/packages/lang/rust —— rust-package.mk 与 rust/host）
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+
+      - name: 构建 wifisync 包
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          cd "$WIFISYNC_SDK"
+          make package/wifisync/compile V=s -j"$(nproc)"
+
+      - name: 构建 LuCI 包
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          cd "$WIFISYNC_SDK"
+          make package/luci-app-wifisync/compile V=s -j"$(nproc)" || \
+            echo "::warning::LuCI 包构建失败（通常是 feeds/luci 未同步）"
+
+      - name: 收集产物
+        if: always() && steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          mkdir -p dist/${{ matrix.arch }}
+          find "$WIFISYNC_SDK/bin/packages" -name '*.apk' -o -name '*.ipk' \
+            | grep -E 'wifisync' \
+            | xargs -r -I{} cp -v {} dist/${{ matrix.arch }}/ || true
+          ls -l dist/${{ matrix.arch }} || true
+
+      - name: 写入构建信息
+        if: always() && steps.filter.outputs.skip != 'true'
+        run: |
+          cat > dist/${{ matrix.arch }}/package-info.json <<EOF
+          {
+            "openwrt_arch": "${{ matrix.arch }}",
+            "openwrt_target": "$(scripts/openwrt-arch.sh ${{ matrix.arch }} target)",
+            "openwrt_release": "${WIFISYNC_OPENWRT_RELEASE}",
+            "commit": "${GITHUB_SHA}",
+            "package_manager": "apk (OpenWrt 25.12+)"
+          }
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.filter.outputs.skip != 'true'
+        with:
+          name: openwrt-pkg-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/
+          if-no-files-found: warn
+          retention-days: 14

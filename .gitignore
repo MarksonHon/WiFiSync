@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+/dist
+/artifacts
+/logs
+/sdk
+*.ipk
+*.apk
+.DS_Store

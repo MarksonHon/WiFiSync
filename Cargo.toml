@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wifisync-core",
+    "crates/wifisync-sys",
+    "crates/wifisync",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "GPL-2.0-only"
+authors = ["WifiSync contributors"]
+repository = "https://github.com/openwrt-wifisync/wifisync"
+
+[workspace.dependencies]
+wifisync-core = { path = "crates/wifisync-core" }
+wifisync-sys = { path = "crates/wifisync-sys" }
+
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+sha2 = "0.10"
+hmac = "0.12"
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+libc = "0.2"
+thiserror = "2"
+
+# OpenWrt 官方构建会通过 CARGO_PROFILE_RELEASE_* 环境变量覆盖这些值
+# （见 feeds/packages/lang/rust/rust-values.mk），此处为本地/独立构建提供同等效果。
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+debug = false
+strip = true
+panic = "abort"
+overflow-checks = true
+
+[profile.release-lto]
+inherits = "release"

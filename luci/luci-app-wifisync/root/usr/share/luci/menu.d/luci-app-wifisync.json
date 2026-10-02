@@ -1,0 +1,76 @@
+{
+	"admin/services/wifisync": {
+		"title": "WifiSync",
+		"order": 30,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-wifisync" ]
+		}
+	},
+	"admin/services/wifisync/overview": {
+		"title": "状态总览",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "wifisync/overview"
+		}
+	},
+	"admin/services/wifisync/roles": {
+		"title": "角色",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "wifisync/roles"
+		}
+	},
+	"admin/services/wifisync/gateway": {
+		"title": "Gateway（零侵入）",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "wifisync/gateway"
+		}
+	},
+	"admin/services/wifisync/controller": {
+		"title": "Controller（准入与下发）",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "wifisync/controller"
+		}
+	},
+	"admin/services/wifisync/bridge": {
+		"title": "网桥",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "wifisync/bridge"
+		}
+	},
+	"admin/services/wifisync/wifi": {
+		"title": "Wi-Fi 与 KVR",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "wifisync/wifi"
+		}
+	},
+	"admin/services/wifisync/backup": {
+		"title": "备份与故障恢复",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "wifisync/backup"
+		}
+	},
+	"admin/services/wifisync/diagnostics": {
+		"title": "诊断",
+		"order": 80,
+		"action": {
+			"type": "view",
+			"path": "wifisync/diagnostics"
+		}
+	}
+}

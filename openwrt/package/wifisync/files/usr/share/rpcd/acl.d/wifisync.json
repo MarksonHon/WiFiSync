@@ -1,0 +1,51 @@
+{
+	"wifisync": {
+		"description": "WifiSync 组网工具：角色、网桥、Wi-Fi 源、准入、快照与故障恢复",
+		"read": {
+			"ubus": {
+				"wifisync": [
+					"status",
+					"capabilities",
+					"roles_get",
+					"bridge_preview",
+					"plan_dry_run",
+					"wifi_source_get",
+					"admission_list",
+					"backup_list",
+					"backup_verify",
+					"failsafe_get",
+					"profile_get",
+					"version"
+				]
+			},
+			"uci": [ "wifisync" ],
+			"file": {
+				"/etc/wifisync/backup/*": [ "read" ],
+				"/etc/wifisync/state.json": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"wifisync": [
+					"roles_set",
+					"apply",
+					"confirm",
+					"revert_last_change",
+					"restore",
+					"wifi_source_set",
+					"gateway_set",
+					"probe_connectivity",
+					"admission_register",
+					"admission_approve",
+					"admission_reject",
+					"admission_revoke",
+					"backup_create",
+					"backup_prune",
+					"failsafe_set",
+					"profile_publish"
+				]
+			},
+			"uci": [ "wifisync" ]
+		}
+	}
+}

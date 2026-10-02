@@ -1,0 +1,16 @@
+[package]
+name = "wifisync-sys"
+description = "WifiSync 系统适配层：uci/netifd/sysfs/iwinfo 只读探测，以及快照、恢复与（仅 AP 的）配置写入"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+wifisync-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }

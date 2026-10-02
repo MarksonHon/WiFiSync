@@ -1,0 +1,14 @@
+[package]
+name = "wifisync-core"
+description = "WifiSync 纯逻辑核心：角色、建桥策略、Wi-Fi 信息源、网络档案、准入、备份与故障恢复状态机"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,118 @@
+name: Release
+
+# 打 tag（如 v0.1.0）时：为 OpenWrt 25.12 的全部 x86 / ARM64 架构交叉编译，
+# 并把二进制挂到 GitHub Release 上（附带构建信息与校验和）。
+
+on:
+  push:
+    tags: [ "v*" ]
+
+permissions:
+  contents: write
+
+env:
+  WIFISYNC_OPENWRT_RELEASE: "25.12.5"
+
+jobs:
+  build:
+    name: ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86_64
+          - i386_pentium4
+          - i386_pentium-mmx
+          - aarch64_generic
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_cortex-a76
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装依赖
+        run: sudo apt-get update && sudo apt-get install -y zstd file
+
+      - name: 交叉编译
+        run: |
+          set -eu
+          TRIPLE=$(scripts/openwrt-arch.sh ${{ matrix.arch }} triple)
+          rustup target add "$TRIPLE"
+          scripts/build-musl.sh ${{ matrix.arch }}
+
+      - name: 生成校验和
+        run: |
+          set -eu
+          cd "dist/${{ matrix.arch }}"
+          sha256sum wifisync > sha256sum.txt
+          cat sha256sum.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifisync-${{ matrix.arch }}
+          path: dist/${{ matrix.arch }}/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 整理发布目录
+        run: |
+          set -eu
+          mkdir -p release
+          for dir in artifacts/wifisync-*; do
+            arch=$(basename "$dir" | sed 's/^wifisync-//')
+            cp "$dir/wifisync" "release/wifisync-${arch}"
+            cp "$dir/build-info.json" "release/build-info-${arch}.json" 2>/dev/null || true
+            cp "$dir/sha256sum.txt" "release/sha256sum-${arch}.txt" 2>/dev/null || true
+          done
+          # 汇总校验和（改名成带架构的文件名）
+          ( cd release && for f in wifisync-*; do
+              case "$f" in *.txt|*.json) continue ;; esac
+              sha256sum "$f"
+            done > SHA256SUMS )
+          cat SHA256SUMS
+          ls -l release
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/wifisync-*
+            release/build-info-*.json
+            release/SHA256SUMS
+          generate_release_notes: true
+          body: |
+            ## WifiSync ${{ github.ref_name }}
+
+            支持 OpenWrt 25.12 的全部 x86 / ARM64 包架构（用官方 SDK 工具链编译）：
+
+            | 包架构 | SDK target | Rust target |
+            |--------|-----------|-------------|
+            | x86_64 | x86/64 | x86_64-unknown-linux-musl |
+            | i386_pentium4 | x86/generic | i686-unknown-linux-musl |
+            | i386_pentium-mmx | x86/legacy | i586-unknown-linux-musl |
+            | aarch64_generic | armsr/armv8 | aarch64-unknown-linux-musl |
+            | aarch64_cortex-a53 | mediatek/filogic | aarch64-unknown-linux-musl |
+            | aarch64_cortex-a72 | bcm27xx/bcm2711 | aarch64-unknown-linux-musl |
+            | aarch64_cortex-a76 | bcm27xx/bcm2712 | aarch64-unknown-linux-musl |
+
+            需要 .apk 安装包的请从 `OpenWrt packages` 工作流（手动触发）获取；
+            或者直接把仓库作为 feed 加入 OpenWrt 构建树后 `make package/wifisync/compile`。
+
+            ### 安装（手动放置二进制）
+
+            ```sh
+            # 在路由器上
+            opkg remove --force-depends wpad-basic-mbedtls  # 可选：换成完整版 wpad 以获得 KVR
+            opkg install wpad-mbedtls
+            cp wifisync-<arch> /usr/bin/wifisync && chmod +x /usr/bin/wifisync
+            ```

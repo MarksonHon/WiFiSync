@@ -1,0 +1,48 @@
+{
+	"luci-app-wifisync": {
+		"description": "Grant access to WifiSync management",
+		"read": {
+			"ubus": {
+				"wifisync": [
+					"status",
+					"capabilities",
+					"roles_get",
+					"bridge_preview",
+					"plan_dry_run",
+					"wifi_source_get",
+					"admission_list",
+					"backup_list",
+					"backup_verify",
+					"failsafe_get",
+					"profile_get",
+					"logs_tail",
+					"version"
+				]
+			},
+			"uci": [ "wifisync" ]
+		},
+		"write": {
+			"ubus": {
+				"wifisync": [
+					"roles_set",
+					"apply",
+					"confirm",
+					"revert_last_change",
+					"restore",
+					"wifi_source_set",
+					"gateway_set",
+					"probe_connectivity",
+					"admission_register",
+					"admission_approve",
+					"admission_reject",
+					"admission_revoke",
+					"backup_create",
+					"backup_prune",
+					"failsafe_set",
+					"profile_publish"
+				]
+			},
+			"uci": [ "wifisync" ]
+		}
+	}
+}
