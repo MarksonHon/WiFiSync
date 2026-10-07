@@ -19,7 +19,14 @@ PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=WiFiSync contributors
 
+# The official Rust flow builds `rust/host` from source (rustc + LLVM, 30–90 minutes).
+# `WIFISYNC_HOST_RUST=1` skips that bootstrap and cross-compiles with a Rust toolchain
+# provided by the host instead (CI installs the target's std with rustup), which builds the
+# same package in minutes.
 PKG_BUILD_DEPENDS:=rust/host
+ifeq ($(WIFISYNC_HOST_RUST),1)
+  PKG_BUILD_DEPENDS:=
+endif
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 

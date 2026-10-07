@@ -1,25 +1,55 @@
 name: Release
 
-# On tag push (e.g. v0.1.0): cross-compile for all x86 / ARM64 architectures of OpenWrt 25.12,
-# and attach the binaries to a GitHub Release (with build info and checksums).
+# Tag push (e.g. v0.1.0) → build the **official packages** with the OpenWrt SDK and attach them to
+# the GitHub Release. Only two OpenWrt releases are published:
+#
+#   * OpenWrt 24.10 → .ipk (opkg)
+#   * OpenWrt 25.12 → .apk (apk)
+#
+# Nothing else is attached (no standalone binaries). Every asset is a tarball for one
+# (OpenWrt release, package architecture) pair, plus one tarball per OpenWrt release for the
+# architecture independent LuCI application and its translations.
+#
+# This path follows the official OpenWrt package flow: download the official SDK → feeds
+# update/install (feeds/packages/lang/rust and feeds/luci) → make package/<name>/compile. The Rust
+# build uses the **host toolchain** (`WIFISYNC_HOST_RUST=1`, see openwrt/package/wifisync/Makefile):
+# the SDK's own `rust/host` bootstrap compiles rustc + LLVM from source, which would add 30-90
+# minutes per architecture for no benefit here.
 
 on:
   push:
     tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: "Build only the specified package architecture (empty = all)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
-  WIFISYNC_OPENWRT_RELEASE: "25.12.5"
+  # Size gate for small-flash devices, measured on the binary that goes into the package.
+  WIFISYNC_MAX_BINARY_BYTES: "3145728"
 
 jobs:
-  build:
-    name: ${{ matrix.arch }}
+  package:
+    name: wifisync ${{ matrix.release }} ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
+        # The published OpenWrt releases (24.10 → .ipk, 25.12 → .apk)
+        release:
+          - "24.10.8"
+          - "25.12.5"
+        # All x86 / ARM64 package architectures of both releases (mapping: scripts/openwrt-arch.sh)
         arch:
           - x86_64
           - i386_pentium4
@@ -28,91 +58,316 @@ jobs:
           - aarch64_cortex-a53
           - aarch64_cortex-a72
           - aarch64_cortex-a76
+    env:
+      WIFISYNC_OPENWRT_RELEASE: ${{ matrix.release }}
+      # Cross-compile with the host Rust toolchain (installed below) instead of the in-SDK
+      # rustc bootstrap; see openwrt/package/wifisync/Makefile.
+      WIFISYNC_HOST_RUST: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Filter (when an architecture is specified manually)
+        id: filter
+        run: |
+          WANTED="${{ github.event.inputs.arch }}"
+          if [ -n "$WANTED" ] && [ "$WANTED" != "${{ matrix.arch }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the host Rust toolchain
+        if: steps.filter.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # The triples the SDK's rust-values.mk derives from each package architecture:
+          # i586 for both i386 architectures, aarch64 for every ARM64 target.
+          targets: x86_64-unknown-linux-musl, i586-unknown-linux-musl, aarch64-unknown-linux-musl
+
+      - name: Package format of this OpenWrt release
+        id: format
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          case "${{ matrix.release }}" in
+            24.10*) manager=opkg; ext=ipk ;;
+            25.12*) manager=apk;  ext=apk ;;
+            *) echo "::error::unsupported OpenWrt release ${{ matrix.release }}"; exit 1 ;;
+          esac
+          echo "manager=$manager" >> "$GITHUB_OUTPUT"
+          echo "ext=$ext" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y zstd file
+        if: steps.filter.outputs.skip != 'true'
+        run: sudo apt-get update && sudo apt-get install -y zstd file build-essential rsync
 
-      - name: Cross-compile
+      - name: Download the official SDK and add this repository as a feed
+        if: steps.filter.outputs.skip != 'true'
         run: |
           set -eu
-          TRIPLE=$(scripts/openwrt-arch.sh ${{ matrix.arch }} triple)
-          rustup target add "$TRIPLE"
-          scripts/build-musl.sh ${{ matrix.arch }}
+          TARGET=$(scripts/openwrt-arch.sh ${{ matrix.arch }} target)
+          . scripts/sdk-env.sh "$TARGET"
+          cd "$WIFISYNC_SDK"
 
-      - name: Generate checksums
+          # This repository is the feed (src-link, no source copy)
+          echo "src-link wifisync $GITHUB_WORKSPACE" >> feeds.conf.default
+          cp feeds.conf.default feeds.conf
+          cat feeds.conf
+
+          # Official feeds (feeds/packages/lang/rust provides rust-package.mk, feeds/luci luci.mk)
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+
+          # Every later step runs in a fresh shell
+          echo "WIFISYNC_SDK=$WIFISYNC_SDK" >> "$GITHUB_ENV"
+
+      - name: Build the wifisync package
+        if: steps.filter.outputs.skip != 'true'
         run: |
           set -eu
-          cd "dist/${{ matrix.arch }}"
-          sha256sum wifisync > sha256sum.txt
-          cat sha256sum.txt
+          cd "$WIFISYNC_SDK"
+          # WIFISYNC_HOST_RUST is set for the whole job, so the package cross-compiles with the
+          # runner's Rust toolchain (installed above) instead of bootstrapping rustc in the SDK.
+          make package/wifisync/compile V=s -j"$(nproc)"
 
-      - uses: actions/upload-artifact@v4
+      - name: Size gate (binary inside the package)
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          BIN=$(find "$WIFISYNC_SDK/build_dir" -type f -path '*wifisync*/ipkg-install/bin/wifisync' -print -quit)
+          if [ -z "$BIN" ]; then
+            echo "::error::the package does not contain /usr/bin/wifisync"
+            exit 1
+          fi
+          SIZE=$(wc -c < "$BIN")
+          echo "binary size: $SIZE bytes (limit $WIFISYNC_MAX_BINARY_BYTES)"
+          if [ "$SIZE" -gt "$WIFISYNC_MAX_BINARY_BYTES" ]; then
+            echo "::error::binary exceeds the size gate, check for oversized dependencies"
+            exit 1
+          fi
+
+      - name: Collect the packages
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          OUT="dist/wifisync-${{ matrix.release }}-${{ matrix.arch }}"
+          mkdir -p "$OUT"
+
+          find "$WIFISYNC_SDK/bin/packages" \( -name '*.ipk' -o -name '*.apk' \) \
+            | grep -E '/wifisync[_-][0-9]' > pkgs.txt || true
+          if [ ! -s pkgs.txt ]; then
+            echo "::error::no wifisync package was built for ${{ matrix.release }} ${{ matrix.arch }}"
+            exit 1
+          fi
+          xargs -r -a pkgs.txt -I{} cp -v {} "$OUT/"
+
+          # The package format follows the OpenWrt release: .ipk for 24.10, .apk for 25.12
+          ls "$OUT"/*.${{ steps.format.outputs.ext }} > /dev/null
+          ls -l "$OUT"
+
+      - name: Write build info
+        if: steps.filter.outputs.skip != 'true'
+        run: |
+          set -eu
+          OUT="dist/wifisync-${{ matrix.release }}-${{ matrix.arch }}"
+          cat > "$OUT/package-info.json" <<EOF
+          {
+            "tag": "${GITHUB_REF_NAME}",
+            "commit": "${GITHUB_SHA}",
+            "openwrt_release": "${{ matrix.release }}",
+            "openwrt_arch": "${{ matrix.arch }}",
+            "openwrt_target": "$(scripts/openwrt-arch.sh ${{ matrix.arch }} target)",
+            "package_manager": "${{ steps.format.outputs.manager }}",
+            "package_format": "${{ steps.format.outputs.ext }}"
+          }
+          EOF
+          cat "$OUT/package-info.json"
+
+      - uses: actions/upload-artifact@v7
+        if: steps.filter.outputs.skip != 'true'
         with:
-          name: wifisync-${{ matrix.arch }}
-          path: dist/${{ matrix.arch }}/
+          name: wifisync-${{ matrix.release }}-${{ matrix.arch }}
+          path: dist/wifisync-${{ matrix.release }}-${{ matrix.arch }}/
+          if-no-files-found: error
+          retention-days: 14
 
-  release:
-    needs: build
+  luci:
+    name: luci-app-wifisync ${{ matrix.release }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        release:
+          - "24.10.8"
+          - "25.12.5"
+    env:
+      WIFISYNC_OPENWRT_RELEASE: ${{ matrix.release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Package format of this OpenWrt release
+        id: format
+        run: |
+          set -eu
+          case "${{ matrix.release }}" in
+            24.10*) manager=opkg; ext=ipk ;;
+            25.12*) manager=apk;  ext=apk ;;
+            *) echo "::error::unsupported OpenWrt release ${{ matrix.release }}"; exit 1 ;;
+          esac
+          echo "manager=$manager" >> "$GITHUB_OUTPUT"
+          echo "ext=$ext" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y zstd file build-essential rsync
+
+      - name: Download the official SDK and add this repository as a feed
+        run: |
+          set -eu
+          # LuCI packages are architecture independent (LUCI_PKGARCH:=all), so one target is enough
+          . scripts/sdk-env.sh x86/64
+          cd "$WIFISYNC_SDK"
+
+          echo "src-link wifisync $GITHUB_WORKSPACE" >> feeds.conf.default
+          cp feeds.conf.default feeds.conf
+
+          # feeds/luci provides luci.mk; feeds/packages is needed by the SDK defaults
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          make defconfig
+
+          echo "WIFISYNC_SDK=$WIFISYNC_SDK" >> "$GITHUB_ENV"
+
+      - name: Build the LuCI package
+        run: |
+          set -eu
+          cd "$WIFISYNC_SDK"
+          make package/luci-app-wifisync/compile V=s -j"$(nproc)"
+
+      - name: Collect the packages
+        run: |
+          set -eu
+          OUT="dist/luci-${{ matrix.release }}"
+          mkdir -p "$OUT"
+
+          find "$WIFISYNC_SDK/bin/packages" \( -name '*.ipk' -o -name '*.apk' \) \
+            | grep -E '/(luci-app-wifisync|luci-i18n-wifisync)[_-][0-9]' > pkgs.txt || true
+          if [ ! -s pkgs.txt ]; then
+            echo "::error::no LuCI package was built for ${{ matrix.release }}"
+            exit 1
+          fi
+          xargs -r -a pkgs.txt -I{} cp -v {} "$OUT/"
+
+          # The package format follows the OpenWrt release: .ipk for 24.10, .apk for 25.12
+          ls "$OUT"/*.${{ steps.format.outputs.ext }} > /dev/null
+          ls -l "$OUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: luci-${{ matrix.release }}
+          path: dist/luci-${{ matrix.release }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish the GitHub Release
+    needs: [ package, luci ]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
-      - name: Prepare the release directory
+      - name: Bundle the packages
         run: |
           set -eu
-          mkdir -p release
+          mkdir -p release stage
+
+          # One tarball per (OpenWrt release, package architecture), named after the artifact
           for dir in artifacts/wifisync-*; do
-            arch=$(basename "$dir" | sed 's/^wifisync-//')
-            cp "$dir/wifisync" "release/wifisync-${arch}"
-            cp "$dir/build-info.json" "release/build-info-${arch}.json" 2>/dev/null || true
-            cp "$dir/sha256sum.txt" "release/sha256sum-${arch}.txt" 2>/dev/null || true
+            name=$(basename "$dir")
+            name=${name#wifisync-}                 # <openwrt release>-<arch>
+            rel=${name%%-*}                        # e.g. 24.10.8
+            arch=${name#*-}
+            openwrt=${rel%.*}                      # 24.10 (the release line users care about)
+            base="wifisync-${GITHUB_REF_NAME}-openwrt-${openwrt}-${arch}"
+            mkdir -p "stage/$base"
+            cp "$dir"/* "stage/$base/"
+            tar -czf "release/$base.tar.gz" -C stage "$base"
           done
-          # Aggregate checksums (renamed to include the architecture)
-          ( cd release && for f in wifisync-*; do
-              case "$f" in *.txt|*.json) continue ;; esac
-              sha256sum "$f"
-            done > SHA256SUMS )
-          cat SHA256SUMS
+
+          # Architecture independent LuCI application (and translations), one tarball per release
+          for dir in artifacts/luci-*; do
+            rel=$(basename "$dir" | sed 's/^luci-//')
+            openwrt=${rel%.*}
+            base="wifisync-${GITHUB_REF_NAME}-openwrt-${openwrt}-luci"
+            mkdir -p "stage/$base"
+            cp "$dir"/* "stage/$base/"
+            tar -czf "release/$base.tar.gz" -C stage "$base"
+          done
+
+          ( cd release && sha256sum ./*.tar.gz > SHA256SUMS )
+          cat release/SHA256SUMS
           ls -l release
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
-            release/wifisync-*
-            release/build-info-*.json
+            release/*.tar.gz
             release/SHA256SUMS
+          fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             ## WifiSync ${{ github.ref_name }}
 
-            Supports all x86 / ARM64 package architectures of OpenWrt 25.12 (built with the official SDK toolchain):
+            Official packages, built with the OpenWrt SDK exactly like the official feed packages
+            (see `docs/BUILDING.md`, path B). Only OpenWrt **24.10** (`.ipk` / `opkg`) and
+            **25.12** (`.apk` / `apk`) are published.
 
-            | Package arch | SDK target | Rust target |
-            |--------|-----------|-------------|
-            | x86_64 | x86/64 | x86_64-unknown-linux-musl |
-            | i386_pentium4 | x86/generic | i686-unknown-linux-musl |
-            | i386_pentium-mmx | x86/legacy | i586-unknown-linux-musl |
-            | aarch64_generic | armsr/armv8 | aarch64-unknown-linux-musl |
-            | aarch64_cortex-a53 | mediatek/filogic | aarch64-unknown-linux-musl |
-            | aarch64_cortex-a72 | bcm27xx/bcm2711 | aarch64-unknown-linux-musl |
-            | aarch64_cortex-a76 | bcm27xx/bcm2712 | aarch64-unknown-linux-musl |
+            | Asset | OpenWrt | Format | Manager |
+            |-------|---------|--------|---------|
+            | `wifisync-<tag>-openwrt-24.10-<arch>.tar.gz` | 24.10 | `.ipk` | `opkg` |
+            | `wifisync-<tag>-openwrt-25.12-<arch>.tar.gz` | 25.12 | `.apk` | `apk` |
+            | `wifisync-<tag>-openwrt-24.10-luci.tar.gz` | 24.10 | `.ipk` (architecture independent) | `opkg` |
+            | `wifisync-<tag>-openwrt-25.12-luci.tar.gz` | 25.12 | `.apk` (architecture independent) | `apk` |
 
-            For .apk installers, use the `OpenWrt packages` workflow (manually triggered);
-            or add this repository as a feed in an OpenWrt build tree and run `make package/wifisync/compile`.
+            Each tarball contains the packages and a `package-info.json` describing the build.
 
-            ### Install (place the binary manually)
+            ### Package architectures
+
+            | Package arch | SDK target |
+            |--------------|------------|
+            | `x86_64` | `x86/64` |
+            | `i386_pentium4` | `x86/generic` |
+            | `i386_pentium-mmx` | `x86/legacy` |
+            | `aarch64_generic` | `armsr/armv8` |
+            | `aarch64_cortex-a53` | `mediatek/filogic` |
+            | `aarch64_cortex-a72` | `bcm27xx/bcm2711` |
+            | `aarch64_cortex-a76` | `bcm27xx/bcm2712` |
+
+            ### Install
 
             ```sh
-            # On the router
-            opkg remove --force-depends wpad-basic-mbedtls  # optional: switch to the full wpad to get KVR
-            opkg install wpad-mbedtls
-            cp wifisync-<arch> /usr/bin/wifisync && chmod +x /usr/bin/wifisync
+            # OpenWrt 24.10 (opkg)
+            tar -xzf wifisync-<tag>-openwrt-24.10-<arch>.tar.gz
+            tar -xzf wifisync-<tag>-openwrt-24.10-luci.tar.gz
+            opkg install wifisync_*.ipk luci-app-wifisync_*.ipk luci-i18n-wifisync-*.ipk
+
+            # OpenWrt 25.12 (apk)
+            tar -xzf wifisync-<tag>-openwrt-25.12-<arch>.tar.gz
+            tar -xzf wifisync-<tag>-openwrt-25.12-luci.tar.gz
+            apk add --allow-untrusted wifisync-*.apk luci-app-wifisync-*.apk luci-i18n-wifisync-*.apk
             ```
+
+            These packages are built by this workflow and are not signed with the official OpenWrt
+            keys, hence `--allow-untrusted` for `apk`.
+
+            802.11k/v/r requires the full `wpad`; `wpad-basic-mbedtls` conflicts with it, so switch
+            over with `apk del wpad-basic-mbedtls && apk add wpad` (or the `opkg` equivalent) before
+            installing.

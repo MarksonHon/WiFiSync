@@ -17,13 +17,18 @@ a single binary, with a LuCI web interface.
 
 ## Supported platforms
 
-OpenWrt 25.12 on x86 and ARM64 (7 package architectures). See
-[`docs/BUILDING.md`](docs/BUILDING.md).
+OpenWrt **24.10** (`.ipk` / opkg) and **25.12** (`.apk` / apk) on x86 and ARM64
+(7 package architectures). Releases ship tarballs with the `wifisync` package and
+the LuCI application; see [`docs/BUILDING.md`](docs/BUILDING.md).
 
 ## Install
 
 ```sh
-# In an OpenWrt build tree, add this repository as a feed
+# From a release: unpack the tarball matching your OpenWrt release and architecture
+tar -xzf wifisync-<tag>-openwrt-24.10.8-<arch>.tar.gz
+opkg install wifisync_*.ipk           # OpenWrt 25.12 uses: apk add --allow-untrusted wifisync-*.apk
+
+# Or build it in an OpenWrt build tree, with this repository as a feed
 echo "src-link wifisync /path/to/WifiSync" >> feeds.conf.default
 ./scripts/feeds update wifisync && ./scripts/feeds install -a -p wifisync
 make menuconfig      # Network → wifisync / LuCI → Applications → luci-app-wifisync

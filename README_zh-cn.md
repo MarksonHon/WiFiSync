@@ -13,12 +13,17 @@
 
 ## 支持平台
 
-OpenWrt 25.12，x86 与 ARM64（7 种包架构）。见 [`docs/BUILDING_zh-cn.md`](docs/BUILDING_zh-cn.md)。
+OpenWrt **24.10**（`.ipk` / opkg）与 **25.12**（`.apk` / apk），x86 与 ARM64（7 种包架构）。
+发行产物是 tarball，内含 `wifisync` 包与 LuCI 应用；见 [`docs/BUILDING_zh-cn.md`](docs/BUILDING_zh-cn.md)。
 
 ## 安装
 
 ```sh
-# 在 OpenWrt 构建树里把本仓库加为 feed
+# 从发行版下载：按你的 OpenWrt 版本与架构解开对应 tarball
+tar -xzf wifisync-<tag>-openwrt-24.10.8-<arch>.tar.gz
+opkg install wifisync_*.ipk           # OpenWrt 25.12 改用：apk add --allow-untrusted wifisync-*.apk
+
+# 或在 OpenWrt 构建树里把本仓库加为 feed 自行编译
 echo "src-link wifisync /path/to/WifiSync" >> feeds.conf.default
 ./scripts/feeds update wifisync && ./scripts/feeds install -a -p wifisync
 make menuconfig      # Network → wifisync / LuCI → Applications → luci-app-wifisync
