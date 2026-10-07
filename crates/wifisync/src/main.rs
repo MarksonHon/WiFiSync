@@ -8,8 +8,10 @@
 //! wifisync ubus list|call <m>      # rpcd exec plugin (used by LuCI)
 //! ```
 
+mod accounts;
 mod ctl;
 mod daemon;
+mod link;
 #[macro_use]
 mod log;
 mod probe;
@@ -37,11 +39,19 @@ usage:
   wifisync restore [--full] [--snapshot initial|<path>]
   wifisync admit list|approve|reject|revoke [device_id]
   wifisync roles [controller ap gateway]
+  wifisync account list|add|passwd|remove [name]   # Controller accounts (password read from stdin)
+  wifisync secret list|set|remove [reference]      # Wi-Fi keys / link password (value read from stdin)
+  wifisync link [status]             # AP / Gateway -> Controller link settings and state
+  wifisync link set endpoint|username|port|bind <value>
+  wifisync link password [--clear]   # password used to log in to a remote Controller
+  wifisync lan [report|list]         # this device's LAN report / reports held by the Controller
   wifisync probe <host[:port]>       # read-only connectivity probe
   wifisync ubus list|call <method>   # rpcd plugin mode
   wifisync version
 
 notes:
+  * the Controller listens on TCP port 6550 by default (`link set port`); AP and Gateway nodes log in
+    with a Controller account, except over loopback (same device), which needs no account;
   * the Gateway / Controller roles never modify any network configuration;
   * only a \"pure AP\" device (AP without Controller and Gateway) merges all ports into br-lan;
   * the initial network baseline is saved before the service starts and restored before it stops.
@@ -110,6 +120,21 @@ fn dispatch(args: &[String]) -> Result<i32, String> {
             args.get(2).map(|s| s.as_str()),
         )?),
         "roles" => print(&ctl::roles(&paths, args.get(1).map(|s| s.as_str()))?),
+        "account" => print(&ctl::account(
+            &paths,
+            args.get(1).map(|s| s.as_str()).unwrap_or("list"),
+            args.get(2).map(|s| s.as_str()),
+        )?),
+        "secret" => print(&ctl::secret(
+            &paths,
+            args.get(1).map(|s| s.as_str()).unwrap_or("list"),
+            args.get(2).map(|s| s.as_str()),
+        )?),
+        "link" => print(&ctl::link(&paths, &args[1..])?),
+        "lan" => print(&ctl::lan(
+            &paths,
+            args.get(1).map(|s| s.as_str()).unwrap_or("report"),
+        )?),
         "probe" => {
             let target = args
                 .get(1)

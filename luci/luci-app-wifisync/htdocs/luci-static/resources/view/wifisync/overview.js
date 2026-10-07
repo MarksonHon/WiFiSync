@@ -48,6 +48,9 @@ return view.extend({
 		var failsafe = status.failsafe || {};
 		var admission = status.admission || {};
 		var backup = status.backup || {};
+		var link = status.link || {};
+		var linkController = link.controller || {};
+		var linkClient = (link.client && link.client.status) || {};
 
 		poll.add(function() {
 			return ws.callStatus().then(function(next) {
@@ -83,6 +86,18 @@ return view.extend({
 				ws.kv(_('Applicable'), ws.boolLabel(failsafe.applies)),
 				ws.kv(_('Heartbeat target'), E('span', {}, (failsafe.config && failsafe.config.heartbeat_endpoint) || _('not configured')))
 			], _('This feature is off by default. Only AP devices restore the default network when the Controller/Gateway becomes unreachable.')),
+
+			ws.card(_('Controller link'), [
+				linkController.enabled ? ws.kv(_('Controller listening on'), linkController.listening && linkController.listening.length
+					? E('span', {}, linkController.listening.join(', '))
+					: E('span', { 'class': 'label warning' }, linkController.error || _('not listening'))) : null,
+				linkController.enabled ? ws.kv(_('Accounts / Gateways / sessions'),
+					E('span', {}, [ linkController.accounts, linkController.gateways, linkController.sessions ].join(' / '))) : null,
+				link.client && link.client.enabled ? ws.kv(_('Link to the Controller'), E('span', {}, [
+					ws.linkStateLabel(linkClient.state),
+					linkClient.endpoint ? '  ' + linkClient.endpoint : ''
+				])) : null
+			].filter(Boolean), _('AP and Gateway devices report to the Controller, which forwards the information. Devices on the Controller itself connect over loopback without an account.')),
 
 			ws.card(_('Admission and backup'), [
 				ws.kv(_('Pending APs'), E('span', {}, String(admission.pending || 0))),

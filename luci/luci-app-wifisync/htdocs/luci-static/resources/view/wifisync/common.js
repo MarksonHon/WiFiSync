@@ -54,6 +54,25 @@ var callFailsafeSet = rpc.declare({
 });
 var callVersion = rpc.declare({ object: 'wifisync', method: 'version', expect: {} });
 var callLogs = rpc.declare({ object: 'wifisync', method: 'logs_tail', params: [ 'lines' ], expect: {} });
+var callLinkGet = rpc.declare({ object: 'wifisync', method: 'link_get', expect: {} });
+var callLinkSet = rpc.declare({
+	object: 'wifisync', method: 'link_set',
+	params: [ 'controller_endpoint', 'controller_username', 'controller_password', 'clear_password', 'controller_port', 'controller_bind' ],
+	expect: {}
+});
+var callLinkStatus = rpc.declare({ object: 'wifisync', method: 'link_status', expect: {} });
+var callAccountList = rpc.declare({ object: 'wifisync', method: 'account_list', expect: {} });
+var callAccountAdd = rpc.declare({
+	object: 'wifisync', method: 'account_add', params: [ 'username', 'password' ], expect: {}
+});
+var callAccountPasswd = rpc.declare({
+	object: 'wifisync', method: 'account_passwd', params: [ 'username', 'password' ], expect: {}
+});
+var callAccountRemove = rpc.declare({
+	object: 'wifisync', method: 'account_remove', params: [ 'username' ], expect: {}
+});
+var callLanReport = rpc.declare({ object: 'wifisync', method: 'lan_report', expect: {} });
+var callLanList = rpc.declare({ object: 'wifisync', method: 'lan_list', expect: {} });
 
 // ── backend messages ─────────────────────────────────────────────────────
 //
@@ -217,6 +236,65 @@ function errorBox(text) {
 	return text ? notice(text, 'error') : null;
 }
 
+// ── Controller link and LAN report ─────────────────────────────────────
+
+// State keys of the AP / Gateway client (see crates/wifisync/src/daemon/link_glue.rs).
+var LINK_STATES = {
+	idle: _('Not used (neither AP nor Gateway role)'),
+	not_configured: _('Controller address not configured'),
+	connecting: _('Connecting'),
+	connected: _('Connected'),
+	error: _('Connection failed')
+};
+
+var IPV6_MODES = {
+	disabled: _('IPv6 disabled on the LAN'),
+	slaac: _('SLAAC only'),
+	dhcpv6: _('DHCPv6 only'),
+	slaac_dhcpv6: _('SLAAC + DHCPv6'),
+	dhcpv6_stateful: _('Stateful DHCPv6'),
+	relay: _('Relay')
+};
+
+function linkStateLabel(state) {
+	return LINK_STATES[state] || state || '-';
+}
+
+/** Rows describing one LAN report: bridge, IPv4 network, DHCP range and IPv6 policy. */
+function lanRows(report) {
+	report = report || {};
+
+	var bridge = report.bridge || {}, ipv4 = report.ipv4 || {}, dhcp = report.dhcp || {}, ipv6 = report.ipv6 || {};
+	var none = _('none');
+
+	return [
+		kv(_('LAN bridge'), E('span', {}, [
+			E('code', {}, bridge.name || '-'),
+			bridge.interface ? ' (' + bridge.interface + ')' : '',
+			' ',
+			bridge.present ? '' : E('span', { 'class': 'label warning' }, _('not present'))
+		])),
+		kv(_('Bridge ports'), E('span', {}, (bridge.ports || []).join(', ') || none)),
+		kv(_('IPv4 network'), E('span', {}, ipv4.address
+			? ipv4.address + (ipv4.prefix_len != null ? '/' + ipv4.prefix_len : '') +
+			  (ipv4.network ? '  (' + ipv4.network + ')' : '')
+			: none)),
+		kv(_('DHCP server'), dhcp.enabled
+			? E('span', {}, (dhcp.first && dhcp.last ? dhcp.first + ' - ' + dhcp.last : _('range unknown')) +
+				(dhcp.leasetime ? '  (' + _('lease time') + ' ' + dhcp.leasetime + ')' : ''))
+			: E('span', { 'class': 'label' }, _('Disabled'))),
+		kv(_('IPv6 policy'), E('span', {}, IPV6_MODES[ipv6.mode] || ipv6.mode || none)),
+		kv(_('IPv6 details'), E('span', {}, [
+			'DHCPv6: ' + (ipv6.dhcpv6 || '-'),
+			'  RA: ' + (ipv6.ra || '-'),
+			'  NDP: ' + (ipv6.ndp || '-'),
+			ipv6.ip6assign != null ? '  ip6assign: ' + ipv6.ip6assign : '',
+			ipv6.ula_prefix ? '  ULA: ' + ipv6.ula_prefix : '',
+			ipv6.upstream_proto ? '  ' + _('upstream') + ': ' + ipv6.upstream_proto : ''
+		].join('')))
+	];
+}
+
 function submit(label, handler) {
 	return E('button', {
 		'class': 'cbi-button cbi-button-apply',
@@ -255,7 +333,18 @@ return {
 	callFailsafeSet: callFailsafeSet,
 	callVersion: callVersion,
 	callLogs: callLogs,
+	callLinkGet: callLinkGet,
+	callLinkSet: callLinkSet,
+	callLinkStatus: callLinkStatus,
+	callAccountList: callAccountList,
+	callAccountAdd: callAccountAdd,
+	callAccountPasswd: callAccountPasswd,
+	callAccountRemove: callAccountRemove,
+	callLanReport: callLanReport,
+	callLanList: callLanList,
 
+	linkStateLabel: linkStateLabel,
+	lanRows: lanRows,
 	message: message,
 	planText: planText,
 	errorText: errorText,

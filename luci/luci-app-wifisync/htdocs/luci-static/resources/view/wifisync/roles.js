@@ -5,10 +5,11 @@
 
 return view.extend({
 	load: function() {
-		return ws.callRolesGet();
+		return Promise.all([ ws.callRolesGet(), ws.callLinkGet(), ws.callLinkStatus() ]);
 	},
 
-	render: function(roles) {
+	render: function(data) {
+		var roles = data[0] || {}, link = data[1] || {}, linkStatus = data[2] || {};
 		var selected = {
 			controller: !!(roles.roles && roles.roles.controller),
 			ap: !!(roles.roles && roles.roles.ap),
@@ -69,6 +70,31 @@ return view.extend({
 
 		updatePreview();
 
+		// ── Link to the Controller (AP / Gateway side) ─────────────────────
+		var client = (linkStatus.client && linkStatus.client.status) || {};
+		var linkEndpoint = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:20em',
+			'value': link.controller_endpoint || '', 'placeholder': _('empty = this device is the Controller') });
+		var linkUser = E('input', { 'type': 'text', 'class': 'cbi-input-text',
+			'value': link.controller_username || '', 'autocomplete': 'off' });
+		var linkPassword = E('input', { 'type': 'password', 'class': 'cbi-input-text', 'autocomplete': 'new-password',
+			'placeholder': link.password_set ? _('unchanged') : '' });
+		var linkMessage = E('div', {});
+
+		function saveLink(clear) {
+			var password = linkPassword.value;
+			return ws.callLinkSet(
+				linkEndpoint.value.trim(), linkUser.value.trim(), password, clear === true,
+				null, null
+			).then(function() {
+				linkPassword.value = '';
+				linkMessage.innerHTML = '';
+				linkMessage.appendChild(ws.notice(_('Controller link saved'), 'success'));
+			}).catch(function(err) {
+				linkMessage.innerHTML = '';
+				linkMessage.appendChild(ws.notice(ws.errorText(err), 'error'));
+			});
+		}
+
 		return E('div', {}, [
 			ws.card(_('Role settings'), [
 				!apAllowed ? ws.notice(_('This device has no wireless module: the AP role is disabled and is not part of the default roles.'), 'warning') : null,
@@ -87,7 +113,26 @@ return view.extend({
 				message
 			].filter(Boolean), _('Bridge rule: enable_bridge = ap && !gateway && !controller')),
 
-			ws.card(_('Change preview'), [ preview ], _('After saving the roles, this shows what the selected role combination would change.'))
+			ws.card(_('Change preview'), [ preview ], _('After saving the roles, this shows what the selected role combination would change.')),
+
+			ws.card(_('Link to the Controller'), [
+				ws.kv(_('State'), E('span', {}, [
+					ws.linkStateLabel(client.state),
+					client.auth ? '  (' + (client.auth === 'loopback' ? _('same device, no login needed') : _('logged in')) + ')' : ''
+				])),
+				client.last_error ? ws.kv(_('Last error'), E('span', {}, client.last_error)) : null,
+				ws.kv(_('Controller address'), linkEndpoint),
+				ws.kv(_('Account'), linkUser),
+				ws.kv(_('Password'), linkPassword),
+				E('div', { 'class': 'cbi-value' }, [
+					E('div', { 'class': 'cbi-value-field' }, [
+						ws.submit(_('Save Controller link'), function() { return saveLink(false); }),
+						' ',
+						ws.submit(_('Forget password'), function() { return saveLink(true); })
+					])
+				]),
+				linkMessage
+			].filter(Boolean), _('AP and Gateway devices connect to the Controller on port %d by default. An account created on the Controller is needed, except when this device is the Controller itself (loopback).').format(link.default_port || 6550))
 		]);
 	},
 

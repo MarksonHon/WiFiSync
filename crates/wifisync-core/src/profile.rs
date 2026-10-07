@@ -15,6 +15,8 @@ pub struct KvrConfig {
     pub v: bool,
     pub r: bool,
     /// Globally unique mobility domain (4 hex digits), allocated centrally by the Controller.
+    /// Empty means "not configured": the resolver derives it from the SSID
+    /// ([`crate::wifi_source::default_mobility_domain`]) so every AP ends up with the same value.
     pub mobility_domain: String,
     /// 802.11r over DS (more stable over relay / cross-device links).
     pub ft_over_ds: bool,
@@ -27,7 +29,7 @@ impl Default for KvrConfig {
             k: true,
             v: true,
             r: true,
-            mobility_domain: "abcd".to_string(),
+            mobility_domain: String::new(),
             ft_over_ds: true,
             ft_psk_generate_local: true,
         }
@@ -35,15 +37,19 @@ impl Default for KvrConfig {
 }
 
 impl KvrConfig {
-    /// The default, valid mobility domain.
+    /// Whether an explicitly configured mobility domain is well formed (4 hex digits).
     pub fn is_valid_mobility_domain(value: &str) -> bool {
         value.len() == 4 && value.chars().all(|c| c.is_ascii_hexdigit())
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if self.mobility_domain.is_empty() {
+            // Not configured: the resolver derives it from the SSID (see `wifi_source`).
+            return Ok(());
+        }
         if !Self::is_valid_mobility_domain(&self.mobility_domain) {
             return Err(format!(
-                "mobility_domain must be 4 hex digits, got `{}`",
+                "mobility_domain must be 4 hex digits, or empty to derive it from the SSID, got `{}`",
                 self.mobility_domain
             ));
         }
@@ -72,10 +78,13 @@ pub struct WifiProfile {
 }
 
 impl WifiProfile {
+    /// A radio template. The SSID is intentionally empty: the resolver always fills it in with the
+    /// real or generated name, and an empty one is rejected by validation instead of silently
+    /// overriding the network with a placeholder.
     pub fn template(radio: impl Into<String>) -> Self {
         Self {
             radio: radio.into(),
-            ssid: "OpenWrt".to_string(),
+            ssid: String::new(),
             auth: "sae-mixed".to_string(),
             psk_ref: "default".to_string(),
             band: "5g".to_string(),
@@ -233,6 +242,13 @@ mod tests {
         p.wifi[0].kvr.mobility_domain = "zzzz".into();
         assert!(p.validate().is_err());
         p.wifi[0].kvr.mobility_domain = "1a2b".into();
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn an_unset_mobility_domain_is_valid_because_it_is_derived() {
+        let p = profile(1, "home");
+        assert!(p.wifi[0].kvr.mobility_domain.is_empty());
         assert!(p.validate().is_ok());
     }
 

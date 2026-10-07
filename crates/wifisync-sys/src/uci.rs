@@ -77,11 +77,21 @@ impl Uci {
                     "add_list",
                     format!("{}={}", op.key(), op.value.clone().unwrap_or_default()),
                 ),
+                // The caller substituted the real secret: write it, but keep it out of the audit
+                // trail that is returned to the CLI and to the UI.
+                UciOpKind::SetSecret => (
+                    "set",
+                    format!("{}={}", op.key(), op.value.clone().unwrap_or_default()),
+                ),
                 UciOpKind::Delete => ("delete", op.key()),
             };
 
             exec::run_ok("uci", &[subcommand, &expr])?;
-            executed.push(format!("uci {} {}", subcommand, expr));
+            if op.kind == UciOpKind::SetSecret {
+                executed.push(format!("uci {} {}=<secret>", subcommand, op.key()));
+            } else {
+                executed.push(format!("uci {} {}", subcommand, expr));
+            }
             if !touched.contains(&op.file) {
                 touched.push(op.file.clone());
             }

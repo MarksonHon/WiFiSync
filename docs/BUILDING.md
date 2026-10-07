@@ -123,7 +123,7 @@ probe, plan, snapshot, and restore logic on a development machine.
 
 | Workflow | Trigger | Contents |
 |----------|---------|----------|
-| `ci.yml` | push / PR / manual | ① `fmt` + `clippy -D warnings` + `cargo test` + end-to-end smoke test<br>② `shellcheck` + JSON validation + `node --check` (LuCI JS) + translation catalog coverage + backend/front-end message key consistency<br>③ cross-compile 7 architectures with the SDK toolchain + size gate + upload artifacts<br>④ build `luci-app-wifisync` with `openwrt/gh-action-sdk` to validate the feed package layout |
+| `ci.yml` | push / PR / manual | ① `fmt` + `clippy -D warnings` + `cargo test` + end-to-end smoke test, compiled for `x86_64-unknown-linux-musl`<br>② `shellcheck` + JSON validation + `node --check` (LuCI JS) + translation catalog coverage + backend/front-end message key consistency<br>③ cross-compile 7 architectures with the SDK toolchain + size gate + upload artifacts<br>④ build `luci-app-wifisync` with `openwrt/gh-action-sdk` to validate the feed package layout |
 | `openwrt-packages.yml` | manual / monthly | Official **.apk/.ipk** builds for 7 architectures (slow, includes the rustc bootstrap) |
 | `release.yml` | tag `v*` | Build 7 architectures + sha256 + publish to GitHub Release (with an architecture reference table) |
 

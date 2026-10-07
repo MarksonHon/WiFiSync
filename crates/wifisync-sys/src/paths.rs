@@ -63,6 +63,11 @@ impl Paths {
         self.persistent_dir().join("secrets")
     }
 
+    /// `/etc/wifisync/accounts.json`: Controller accounts for the AP / Gateway link (0600).
+    pub fn accounts_file(&self) -> PathBuf {
+        self.persistent_dir().join("accounts.json")
+    }
+
     /// `/etc/wifisync/state.json` (admission registry, profile version, etc.)
     pub fn state_file(&self) -> PathBuf {
         self.persistent_dir().join("state.json")

@@ -3,10 +3,9 @@
 //! Constraint (requirement 2): no TLS -- avoid `openssl-sys` / `ring` (no MIPS support in ring).
 //! Therefore:
 //! * the local API goes over a UNIX socket (kernel permission isolation, socket mode 0600);
-//! * inter-node heartbeats use **HMAC-SHA256** authentication + **ChaCha20-Poly1305** encrypted
-//!   payloads (all pure Rust).
+//! * the Controller link (AP / Gateway -> Controller, see `link.rs`) uses **HMAC-SHA256**
+//!   challenge-response authentication + **ChaCha20-Poly1305** encrypted frames (all pure Rust).
 
-#![allow(dead_code)] // seal/open reserved for encrypted profile transfer; see docs/BACKEND.md (M3)
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use hmac::{Hmac, Mac};
@@ -97,7 +96,7 @@ pub fn open(psk: &[u8], sealed: &[u8], aad: &[u8]) -> SysResult<Vec<u8>> {
         })
 }
 
-fn random_bytes(len: usize) -> SysResult<Vec<u8>> {
+pub fn random_bytes(len: usize) -> SysResult<Vec<u8>> {
     let hex = random_hex(len)?;
     Ok(hex
         .as_bytes()
@@ -107,8 +106,19 @@ fn random_bytes(len: usize) -> SysResult<Vec<u8>> {
         .collect())
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Decode a hex string; `None` on odd length or a non-hex digit.
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0 || !text.is_ascii() {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// Secret store: `/etc/wifisync/secrets/<ref>` (0600).
@@ -119,10 +129,6 @@ pub struct SecretStore {
 impl SecretStore {
     pub fn new(dir: impl Into<std::path::PathBuf>) -> Self {
         Self { dir: dir.into() }
-    }
-
-    pub fn dir(&self) -> &Path {
-        &self.dir
     }
 
     pub fn put(&self, reference: &str, value: &str) -> SysResult<()> {
@@ -145,8 +151,37 @@ impl SecretStore {
         }
     }
 
+    /// Delete a secret; a missing one is not an error.
+    pub fn remove(&self, reference: &str) -> SysResult<()> {
+        match std::fs::remove_file(self.dir.join(sanitize(reference))) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(SysError::Io(e)),
+        }
+    }
+
     pub fn contains(&self, reference: &str) -> bool {
         self.dir.join(sanitize(reference)).exists()
+    }
+
+    /// References present in the store. Values are never read.
+    ///
+    /// The names are the sanitized file names, which can differ from the reference that was used
+    /// when it contained separators (`gateway/psk` is stored as `gateway_psk`).
+    pub fn list(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&self.dir) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with(".tmp") {
+                        continue;
+                    }
+                    out.push(name.to_string());
+                }
+            }
+        }
+        out.sort();
+        out
     }
 }
 
@@ -204,6 +239,16 @@ mod tests {
     }
 
     #[test]
+    fn hex_roundtrip() {
+        assert_eq!(
+            unhex(&hex(&[0, 1, 0xab, 0xff])),
+            Some(vec![0, 1, 0xab, 0xff])
+        );
+        assert_eq!(unhex("abc"), None);
+        assert_eq!(unhex("zz"), None);
+    }
+
+    #[test]
     fn constant_time_compare() {
         assert!(constant_time_eq(b"abc", b"abc"));
         assert!(!constant_time_eq(b"abc", b"abd"));
@@ -221,6 +266,9 @@ mod tests {
         let meta = std::fs::metadata(dir.join("gateway_psk")).unwrap();
         assert_eq!(meta.permissions().mode() & 0o777, 0o600);
         assert!(store.contains("gateway/psk"));
+        store.remove("gateway/psk").unwrap();
+        store.remove("gateway/psk").unwrap();
+        assert!(!store.contains("gateway/psk"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

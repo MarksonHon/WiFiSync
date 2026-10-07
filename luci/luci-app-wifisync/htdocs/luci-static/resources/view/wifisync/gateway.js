@@ -5,11 +5,13 @@
 
 return view.extend({
 	load: function() {
-		return Promise.all([ ws.callStatus(), ws.callCapabilities() ]);
+		return Promise.all([ ws.callStatus(), ws.callCapabilities(), ws.callLanReport(), ws.callLinkStatus() ]);
 	},
 
 	render: function(data) {
-		var status = data[0] || {}, caps = data[1] || {};
+		var status = data[0] || {}, caps = data[1] || {}, lan = data[2] || {}, linkStatus = data[3] || {};
+		var client = (linkStatus.client && linkStatus.client.status) || {};
+		var isGateway = !!(status.roles && status.roles.gateway);
 		var ports = caps.ports || [];
 		var selected = {};
 		(status.gateway_lan_ifaces || []).forEach(function(name) { selected[name] = true; });
@@ -68,6 +70,15 @@ return view.extend({
 			ws.card(_('Corresponding LAN interfaces'), rows.length ? rows : [
 				ws.notice(_('No physical ports were detected (possibly a host or virtual environment).'), 'warning')
 			], _('After selecting them, open the overview page and run a dry-run to confirm that it reports 0 changes.')),
+
+			ws.card(_('LAN information reported to the Controller'), ws.lanRows(lan).concat([
+				ws.kv(_('Controller link'), E('span', {}, [
+					ws.linkStateLabel(client.state),
+					client.last_ok ? '  (' + _('last report') + ': ' + new Date(client.last_ok * 1000).toLocaleString() + ')' : ''
+				]))
+			]), isGateway
+				? _('The Gateway reports the bridge that carries the LAN, its network, the DHCP range and the IPv6 policy to the Controller periodically. The information is read from the configuration; nothing is changed.')
+				: _('This device does not take the Gateway role, so nothing is reported. The values below are only what would be reported.')),
 
 			ws.card(_('Connectivity probe (read-only)'), [
 				E('div', { 'class': 'cbi-value' }, [

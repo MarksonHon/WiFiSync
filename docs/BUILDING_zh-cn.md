@@ -116,7 +116,7 @@ cargo run -- plan      # 角色为 controller+gateway 时输出 "0 项改动"
 
 | 工作流 | 触发 | 内容 |
 |--------|------|------|
-| `ci.yml` | push / PR / 手动 | ① `fmt` + `clippy -D warnings` + `cargo test` + 端到端冒烟测试<br>② `shellcheck` + JSON 校验 + `node --check`（LuCI JS）+ 视图 `_()` 词条与 `po/*` 的覆盖比对 + 后端消息键与前端 `MESSAGES` 表的一致性比对<br>③ 7 个架构用 SDK 工具链交叉编译 + 体积门禁 + 上传产物<br>④ 用 `openwrt/gh-action-sdk` 构建 `luci-app-wifisync` 验证 feed 包结构 |
+| `ci.yml` | push / PR / 手动 | ① `fmt` + `clippy -D warnings` + `cargo test` + 端到端冒烟测试（均按 `x86_64-unknown-linux-musl` 目标编译）<br>② `shellcheck` + JSON 校验 + `node --check`（LuCI JS）+ 视图 `_()` 词条与 `po/*` 的覆盖比对 + 后端消息键与前端 `MESSAGES` 表的一致性比对<br>③ 7 个架构用 SDK 工具链交叉编译 + 体积门禁 + 上传产物<br>④ 用 `openwrt/gh-action-sdk` 构建 `luci-app-wifisync` 验证 feed 包结构 |
 | `openwrt-packages.yml` | 手动 / 每月 | 7 个架构的**官方 .apk/.ipk** 构建（慢，含 rustc 引导） |
 | `release.yml` | 打 tag `v*` | 7 个架构编译 + sha256 + 发布到 GitHub Release（含架构对照表） |
 

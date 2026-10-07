@@ -34,8 +34,8 @@ LuCI JS 视图  →  ubus 对象 `wifisync`  →  rpcd exec 插件 (/usr/libexec
 
 | 权限 | 方法 |
 |------|------|
-| read | `status`、`capabilities`、`roles_get`、`bridge_preview`、`plan_dry_run`、`wifi_source_get`、`admission_list`、`backup_list`、`backup_verify`、`failsafe_get`、`profile_get`、`logs_tail`、`version` |
-| write | `roles_set`、`apply`、`confirm`、`revert_last_change`、`restore`、`wifi_source_set`、`gateway_set`、`probe_connectivity`、`admission_register`、`admission_approve`、`admission_reject`、`admission_revoke`、`backup_create`、`backup_prune`、`failsafe_set`、`profile_publish` |
+| read | `status`、`capabilities`、`roles_get`、`bridge_preview`、`plan_dry_run`、`wifi_source_get`、`admission_list`、`backup_list`、`backup_verify`、`failsafe_get`、`profile_get`、`link_get`、`link_status`、`account_list`、`lan_report`、`lan_list`、`logs_tail`、`version` |
+| write | `roles_set`、`apply`、`confirm`、`revert_last_change`、`restore`、`wifi_source_set`、`gateway_set`、`probe_connectivity`、`admission_register`、`admission_approve`、`admission_reject`、`admission_revoke`、`backup_create`、`backup_prune`、`failsafe_set`、`profile_publish`、`link_set`、`account_add`、`account_passwd`、`account_remove` |
 
 两部分同时授予 `uci: [ "wifisync" ]`（仅服务自身配置）。
 
@@ -73,9 +73,9 @@ luci/luci-app-wifisync/
 | 排序 | 页面 | 内容 |
 |------|------|------|
 | 10 | 状态总览 | 角色徽标、无线存在性、**Controller↔Gateway 连通性徽标**、**待准入 AP 数**、网桥成员、心跳/回滚倒计时、**基线状态与最近一次恢复时间** |
-| 20 | 角色 | 三复选框；无无线时 AP 禁用并提示；显式标注「Gateway/Controller 不会修改你的网络配置」 |
-| 30 | Gateway | 仅「选择对应 LAN 接口」+ 探针目标；页面顶部常驻零侵入说明；**无任何网络写入控件** |
-| 40 | Controller | ① **准入列表**（待批准/已批准/黑名单，批准/拒绝/撤销）② **Wi-Fi 信息源三选一**（自身/Gateway/自定义，含禁用原因提示）③ `NetworkProfile` 预览与下发按钮 ④ 连通性探测目标与「确认连通」按钮 |
+| 20 | 角色 | 三复选框；无无线时 AP 禁用并提示；显式标注「Gateway/Controller 不会修改你的网络配置」；**到 Controller 的连接**（地址、账号、密码、连接状态——密码只写不读） |
+| 30 | Gateway | 仅「选择对应 LAN 接口」+ 探针目标；**Gateway 上报给 Controller 的 LAN 信息**（网桥、网络、DHCP 范围、IPv6 策略，只读）；页面顶部常驻零侵入说明；**无任何网络写入控件** |
+| 40 | Controller | ① **准入列表**（待批准/已批准/黑名单，批准/拒绝/撤销）② **Wi-Fi 信息源三选一**（自身/Gateway/自定义，含禁用原因提示）③ `NetworkProfile` 预览与下发按钮 ④ 连通性探测目标与「确认连通」按钮 ⑤ **监听设置**（监听地址与端口，默认 6550）⑥ AP/Gateway 的**账号**（创建/改密/删除）⑦ **Gateway 上报的 LAN 信息** |
 | 50 | 网桥 | **仅纯 AP 设备可见**；自动规划预览 + dry-run diff；非纯 AP 时显示「当前角色组合不建桥」及原因；预留多网桥/VLAN 高级区（默认折叠） |
 | 60 | Wi-Fi 与 KVR | `mobility_domain`、FT 模式、k/v 开关；`wpad` 版本检查与安装引导 |
 | 70 | 备份与故障恢复 | 基线信息（时间/校验和/`managed_keys`）、快照列表（pre-start / pre-change）、完整性校验、`restore_mode` 选择、**「立即恢复基线」**、**「重新建立基线」**（二次确认 + dry-run 预览）、停止时是否恢复的逃生开关，以及故障恢复开关、超时、动作与手动回滚（仅 AP 侧生效，页面注明） |

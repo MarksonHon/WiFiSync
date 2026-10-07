@@ -41,7 +41,16 @@ pub struct WifisyncConfig {
     /// Connectivity probe target (the user explicitly confirms whether Controller and Gateway can
     /// reach each other).
     pub gateway_endpoint: Option<String>,
+    /// Address of the Controller for the AP / Gateway link (`host[:port]`). Empty means "this
+    /// device" when it takes the Controller role (reached over loopback, no credentials).
     pub controller_endpoint: Option<String>,
+    /// Account used by this device to log in to a remote Controller (the password lives in the
+    /// secret store, never in uci).
+    pub controller_username: Option<String>,
+    /// TCP port the Controller listens on.
+    pub controller_port: u16,
+    /// Address the Controller listens on.
+    pub controller_bind: String,
     /// Whether the user has confirmed that "the local wireless configuration may be modified".
     pub local_wifi_change_confirmed: bool,
     pub wifi_source: WifiSourceConfig,
@@ -64,6 +73,9 @@ impl Default for WifisyncConfig {
             gateway_lan_ifaces: Vec::new(),
             gateway_endpoint: None,
             controller_endpoint: None,
+            controller_username: None,
+            controller_port: crate::link::DEFAULT_PORT,
+            controller_bind: crate::link::DEFAULT_BIND.to_string(),
             local_wifi_change_confirmed: false,
             wifi_source: WifiSourceConfig::default(),
             failsafe: FailsafeConfig::default(),
@@ -144,6 +156,19 @@ impl WifisyncConfig {
             opt(sections, SECTION_MAIN, "gateway_endpoint").filter(|v| !v.is_empty());
         cfg.controller_endpoint =
             opt(sections, SECTION_MAIN, "controller_endpoint").filter(|v| !v.is_empty());
+        cfg.controller_username =
+            opt(sections, SECTION_MAIN, "controller_username").filter(|v| !v.is_empty());
+        if let Some(port) = opt(sections, SECTION_MAIN, "controller_port")
+            .and_then(|v| v.parse::<u64>().ok())
+            .and_then(|v| crate::link::check_port(v).ok())
+        {
+            cfg.controller_port = port;
+        }
+        if let Some(bind) = opt(sections, SECTION_MAIN, "controller_bind") {
+            if crate::link::check_bind(&bind).is_ok() {
+                cfg.controller_bind = bind;
+            }
+        }
         cfg.local_wifi_change_confirmed =
             opt_bool(sections, SECTION_MAIN, "local_wifi_change_confirmed", false);
 
@@ -174,7 +199,8 @@ impl WifisyncConfig {
                 opt_bool(sections, SECTION_CUSTOM, "ft_psk_generate_local", true);
 
             source.custom = Some(CustomWifi {
-                ssid: opt(sections, SECTION_CUSTOM, "ssid").unwrap_or_else(|| "WifiSync".into()),
+                // Empty means "not set": the resolver substitutes the generated default SSID.
+                ssid: opt(sections, SECTION_CUSTOM, "ssid").unwrap_or_default(),
                 auth: opt(sections, SECTION_CUSTOM, "auth").unwrap_or_else(|| "sae-mixed".into()),
                 psk_ref: opt(sections, SECTION_CUSTOM, "psk_ref")
                     .unwrap_or_else(|| "custom".into()),
@@ -200,7 +226,11 @@ impl WifisyncConfig {
         failsafe.keep_ssid = opt_bool(sections, SECTION_FAILSAFE, "keep_ssid", false);
         failsafe.heartbeat_endpoint = opt(sections, SECTION_FAILSAFE, "heartbeat_endpoint")
             .filter(|v| !v.is_empty())
-            .or_else(|| cfg.controller_endpoint.clone())
+            .or_else(|| {
+                cfg.controller_endpoint.as_deref().map(|endpoint| {
+                    crate::link::endpoint_with_port(endpoint, crate::link::DEFAULT_PORT)
+                })
+            })
             .or_else(|| cfg.gateway_endpoint.clone());
         cfg.failsafe = failsafe;
 
@@ -277,6 +307,24 @@ impl WifisyncConfig {
             SECTION_MAIN,
             "controller_endpoint",
             self.controller_endpoint.clone().unwrap_or_default(),
+        ));
+        ops.push(UciOp::set(
+            UCI_FILE,
+            SECTION_MAIN,
+            "controller_username",
+            self.controller_username.clone().unwrap_or_default(),
+        ));
+        ops.push(UciOp::set(
+            UCI_FILE,
+            SECTION_MAIN,
+            "controller_port",
+            self.controller_port.to_string(),
+        ));
+        ops.push(UciOp::set(
+            UCI_FILE,
+            SECTION_MAIN,
+            "controller_bind",
+            &self.controller_bind,
         ));
         ops.push(UciOp::set(
             UCI_FILE,
@@ -439,11 +487,8 @@ impl WifisyncConfig {
         self.roles.validate(caps)?;
         if let Some(custom) = &self.wifi_source.custom {
             custom.kvr.validate().map_err(crate::CoreError::Invalid)?;
-            if custom.ssid.trim().is_empty() {
-                return Err(crate::CoreError::Invalid(
-                    "custom SSID must not be empty".into(),
-                ));
-            }
+            // An empty SSID is allowed: the resolver substitutes the generated default SSID
+            // (`Home_Wi-Fi_<6 random hex digits>`), which the user can still overwrite.
         }
         if self.wifi_source.kind == WifiSourceKind::Gateway
             && self
@@ -456,6 +501,20 @@ impl WifisyncConfig {
             return Err(crate::CoreError::Invalid(
                 "a Gateway address is required when the Gateway is used as Wi-Fi source".into(),
             ));
+        }
+        crate::link::check_bind(&self.controller_bind).map_err(crate::CoreError::Invalid)?;
+        if self.controller_port == 0 {
+            return Err(crate::CoreError::Invalid(
+                "the Controller port must be between 1 and 65535".into(),
+            ));
+        }
+        if let Some(name) = &self.controller_username {
+            if !crate::link::valid_username(name) {
+                return Err(crate::CoreError::Invalid(
+                    "the Controller account name may only contain letters, digits and - _ . :"
+                        .into(),
+                ));
+            }
         }
         if self.failsafe.enabled && self.failsafe.link_timeout_secs < 30 {
             return Err(crate::CoreError::Invalid(
@@ -578,6 +637,48 @@ config failsafe 'failsafe'
         );
         assert_eq!(cfg.restore_mode, RestoreMode::ManagedOnly);
         assert_eq!(cfg.wifi_source.kind, WifiSourceKind::ControllerSelf);
+    }
+
+    #[test]
+    fn controller_link_defaults_and_overrides() {
+        let cfg = WifisyncConfig::from_sections(&[]);
+        assert_eq!(cfg.controller_port, 6550);
+        assert_eq!(cfg.controller_bind, "0.0.0.0");
+        assert!(cfg.controller_username.is_none());
+
+        let text = "config wifisync 'main'\n\toption controller_port '7001'\n\toption controller_bind '::'\n\toption controller_username 'ap1'\n\toption controller_endpoint '10.0.0.2'\n";
+        let cfg = WifisyncConfig::from_sections(&uci_file::parse(text));
+        assert_eq!(cfg.controller_port, 7001);
+        assert_eq!(cfg.controller_bind, "::");
+        assert_eq!(cfg.controller_username.as_deref(), Some("ap1"));
+        // The Controller address doubles as the failover heartbeat target, on the link port
+        assert_eq!(
+            cfg.failsafe.heartbeat_endpoint.as_deref(),
+            Some("10.0.0.2:6550")
+        );
+
+        let ops = cfg.to_uci_ops();
+        assert!(ops
+            .iter()
+            .any(|op| op.key() == "wifisync.main.controller_port"
+                && op.value.as_deref() == Some("7001")));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn invalid_link_settings_fall_back_or_fail_validation() {
+        let text = "config wifisync 'main'\n\toption controller_port '99999'\n\toption controller_bind 'not-an-ip'\n";
+        let cfg = WifisyncConfig::from_sections(&uci_file::parse(text));
+        assert_eq!(cfg.controller_port, 6550);
+        assert_eq!(cfg.controller_bind, "0.0.0.0");
+
+        let mut cfg = WifisyncConfig::default();
+        cfg.roles = Roles::controller_only();
+        cfg.controller_bind = "lan".into();
+        assert!(cfg.validate(&Capabilities::default()).is_err());
+        cfg.controller_bind = "0.0.0.0".into();
+        cfg.controller_username = Some("bad name".into());
+        assert!(cfg.validate(&Capabilities::default()).is_err());
     }
 
     #[test]

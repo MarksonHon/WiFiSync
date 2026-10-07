@@ -40,6 +40,9 @@ wifisync backup list
 wifisync backup verify
 wifisync restore                    # managed_only (default)
 wifisync restore --full             # overwrite from the baseline
+wifisync account add <name>         # Controller account for remote APs / Gateways
+wifisync link                       # link to the Controller (port 6550 by default)
+wifisync lan report                 # LAN bridge / network / DHCP / IPv6 the Gateway reports
 ```
 
 LuCI: **Services → WifiSync**, with 8 pages: overview / roles / gateway /
@@ -52,6 +55,7 @@ controller / bridge / Wi-Fi & KVR / backup & failover / diagnostics.
 | [`docs/BACKEND.md`](docs/BACKEND.md) | Backend design: requirements, roles, dependencies, lifecycle, milestones, tests ([简体中文](docs/BACKEND_zh-cn.md)) |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | LuCI design: ubus contract, pages, safety patterns, i18n ([简体中文](docs/FRONTEND_zh-cn.md)) |
 | [`docs/BUILDING.md`](docs/BUILDING.md) | Build paths, architecture mapping, CI ([简体中文](docs/BUILDING_zh-cn.md)) |
+| [`docs/STEERING.md`](docs/STEERING.md) | Client steering design (**proposed, not implemented**): controller-centric architecture, protocol, safety rails, milestones ([简体中文](docs/STEERING_zh-cn.md)) |
 
 ## License
 

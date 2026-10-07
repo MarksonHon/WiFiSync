@@ -39,8 +39,8 @@ LuCI JS view  →  ubus object `wifisync`  →  rpcd exec plugin (/usr/libexec/r
 
 | Access | Methods |
 |--------|---------|
-| read | `status`, `capabilities`, `roles_get`, `bridge_preview`, `plan_dry_run`, `wifi_source_get`, `admission_list`, `backup_list`, `backup_verify`, `failsafe_get`, `profile_get`, `logs_tail`, `version` |
-| write | `roles_set`, `apply`, `confirm`, `revert_last_change`, `restore`, `wifi_source_set`, `gateway_set`, `probe_connectivity`, `admission_register`, `admission_approve`, `admission_reject`, `admission_revoke`, `backup_create`, `backup_prune`, `failsafe_set`, `profile_publish` |
+| read | `status`, `capabilities`, `roles_get`, `bridge_preview`, `plan_dry_run`, `wifi_source_get`, `admission_list`, `backup_list`, `backup_verify`, `failsafe_get`, `profile_get`, `link_get`, `link_status`, `account_list`, `lan_report`, `lan_list`, `logs_tail`, `version` |
+| write | `roles_set`, `apply`, `confirm`, `revert_last_change`, `restore`, `wifi_source_set`, `gateway_set`, `probe_connectivity`, `admission_register`, `admission_approve`, `admission_reject`, `admission_revoke`, `backup_create`, `backup_prune`, `failsafe_set`, `profile_publish`, `link_set`, `account_add`, `account_passwd`, `account_remove` |
 
 Both sections also grant `uci: [ "wifisync" ]` (the service's own configuration only).
 
@@ -79,9 +79,9 @@ Menu group: **Services → WifiSync** (`admin/services/wifisync`).
 | Order | Page | Content |
 |-------|------|---------|
 | 10 | Overview | Role badges, wireless presence, **Controller↔Gateway connectivity badge**, **pending admission count**, bridge members, heartbeat/rollback countdown, **baseline status and last restore time** |
-| 20 | Roles | Three checkboxes; AP is disabled with a hint when there is no wireless; an explicit note that "Gateway/Controller will not modify your network configuration" |
-| 30 | Gateway | Only "select the corresponding LAN interface" + probe target; a permanent zero-intrusion note at the top; **no network-writing controls at all** |
-| 40 | Controller | ① **admission list** (pending/approved/blacklist, approve/reject/revoke) ② **Wi-Fi source choice** (self/Gateway/custom, with the reason when disabled) ③ `NetworkProfile` preview and publish button ④ connectivity probe target and "confirm connectivity" |
+| 20 | Roles | Three checkboxes; AP is disabled with a hint when there is no wireless; an explicit note that "Gateway/Controller will not modify your network configuration"; **Link to the Controller** (address, account, password, link state — the password is write-only) |
+| 30 | Gateway | Only "select the corresponding LAN interface" + probe target; **the LAN information the Gateway reports to the Controller** (bridge, network, DHCP range, IPv6 policy, read-only); a permanent zero-intrusion note at the top; **no network-writing controls at all** |
+| 40 | Controller | ① **admission list** (pending/approved/blacklist, approve/reject/revoke) ② **Wi-Fi source choice** (self/Gateway/custom, with the reason when disabled) ③ `NetworkProfile` preview and publish button ④ connectivity probe target and "confirm connectivity" ⑤ **listener** (listen address and port, 6550 by default) ⑥ **accounts** for APs and Gateways (create / change password / delete) ⑦ **LAN information reported by the Gateways** |
 | 50 | Bridge | **Visible to pure AP devices only**; automatic plan preview + dry-run diff; for other role combinations it shows "the current role combination creates no bridge" and why; the reserved multi-bridge/VLAN area is collapsed by default |
 | 60 | Wi-Fi & KVR | `mobility_domain`, FT mode, k/v switches; `wpad` version check and install guidance |
 | 70 | Backup & failover | Baseline info (time / checksum / `managed_keys`), snapshot lists (pre-start / pre-change), integrity verification, `restore_mode` selection, **"restore baseline now"**, **"re-baseline"** (double confirmation + dry-run preview), restore-on-stop escape hatch, plus the failover switches, timeouts, action and manual rollback (AP only, noted on the page) |
