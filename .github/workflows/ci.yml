@@ -1,8 +1,5 @@
 name: CI
 
-# Runs on every push/PR: code quality gates + multi-arch cross-compilation with the official OpenWrt SDK toolchain.
-# Artifacts are static (dynamically linked musl) binaries ready for ipk/apk packaging, with a size gate.
-
 on:
   push:
     branches: [ main, master, dev ]
@@ -15,22 +12,24 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # OpenWrt release version (25.12.x). SDK name and toolchain version are resolved by scripts/sdk-env.sh.
   WIFISYNC_OPENWRT_RELEASE: "25.12.5"
-  # Binary size gate: 3 MiB (needed by small-flash devices)
+  # Size gate for small-flash devices.
   WIFISYNC_MAX_BINARY_BYTES: "3145728"
 
 jobs:
-  # ── 1. Rust quality gates ──────────────────────────────────────────────────────
   lint-test:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
+    # Compile against musl so that gnu-only code fails here instead of on the device.
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: x86_64-unknown-linux-musl
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -40,10 +39,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: clippy (-D warnings)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target "$TARGET" -- -D warnings
 
       - name: Unit tests (role matrix / bridging strategy / backup / failover / zero-intrusion invariants)
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --target "$TARGET"
 
       - name: End-to-end smoke test (fake OpenWrt root)
         run: |
@@ -68,25 +67,22 @@ jobs:
           	option roles 'controller gateway'
           EOF
 
-          BIN=./target/debug/wifisync
-          cargo build --locked -p wifisync
+          cargo build --locked --target "$TARGET" -p wifisync
+          BIN="./target/$TARGET/debug/wifisync"
 
           # Non-AP role: the written plan must be empty (zero-intrusion invariant)
           PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
           echo "$PLAN"
           echo "$PLAN" | grep -q '"empty": true'
 
-          # Pure AP: must produce bridge and wireless writes
           sed -i "s/option roles 'controller gateway'/option roles 'ap'/" "$ROOT/etc/config/wifisync"
           PLAN=$(WIFISYNC_ROOT="$ROOT" "$BIN" plan)
           echo "$PLAN" | grep -q '"name": "br-lan"'
           echo "$PLAN" | grep -q 'ieee80211r'
 
-          # Backup lifecycle: create + verify
           WIFISYNC_ROOT="$ROOT" "$BIN" backup create >/dev/null
           WIFISYNC_ROOT="$ROOT" "$BIN" backup verify | grep -q '"ok": true'
 
-  # ── 2. Shell / JSON static checks ──────────────────────────────────────────────
   lint-scripts:
     name: shellcheck + json
     runs-on: ubuntu-latest
@@ -226,7 +222,6 @@ jobs:
           EOF
           node /tmp/wifisync-message-keys.js
 
-  # ── 3. Multi-arch cross-compilation (reusing the OpenWrt SDK toolchain) ────────────────────────────
   cross-build:
     name: ${{ matrix.arch }}
     runs-on: ubuntu-latest
@@ -234,7 +229,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # All x86 and ARM64 package architectures in OpenWrt 25.12 (mapping in scripts/openwrt-arch.sh)
+        # All x86 / ARM64 package architectures of OpenWrt 25.12 (mapping: scripts/openwrt-arch.sh)
         arch:
           - x86_64
           - i386_pentium4
@@ -280,7 +275,6 @@ jobs:
           path: dist/${{ matrix.arch }}/
           if-no-files-found: error
 
-  # ── 4. LuCI package build (validate the luci feed package layout with the official gh-action-sdk) ────────────
   luci-package:
     name: luci-app-wifisync (${{ matrix.arch }})
     runs-on: ubuntu-latest
