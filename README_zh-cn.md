@@ -35,6 +35,9 @@ wifisync backup list
 wifisync backup verify
 wifisync restore                    # 默认 managed_only
 wifisync restore --full             # 按基线整体覆盖
+wifisync account add <name>         # 为远程 AP / Gateway 创建 Controller 账号
+wifisync link                       # 到 Controller 的连接（默认端口 6550）
+wifisync lan report                 # Gateway 上报的 LAN 网桥 / 网络 / DHCP / IPv6
 ```
 
 LuCI：**服务 → WifiSync**，共 8 个页面：状态总览 / 角色 / Gateway / Controller / 网桥 / Wi-Fi 与 KVR / 备份与故障恢复 / 诊断。
@@ -46,6 +49,7 @@ LuCI：**服务 → WifiSync**，共 8 个页面：状态总览 / 角色 / Gatew
 | [`docs/BACKEND_zh-cn.md`](docs/BACKEND_zh-cn.md) | 后端设计：需求追溯、角色模型、依赖、生命周期、里程碑、测试（[English](docs/BACKEND.md)） |
 | [`docs/FRONTEND_zh-cn.md`](docs/FRONTEND_zh-cn.md) | 前端设计：ubus 契约、页面清单、安全交互、多语言（[English](docs/FRONTEND.md)） |
 | [`docs/BUILDING_zh-cn.md`](docs/BUILDING_zh-cn.md) | 构建路径、架构映射、CI（[English](docs/BUILDING.md)） |
+| [`docs/STEERING_zh-cn.md`](docs/STEERING_zh-cn.md) | 客户端引导设计（**提案，尚未实现**）：Controller 中心架构、协议、安全护栏、里程碑（[English](docs/STEERING.md)） |
 
 ## 许可
 

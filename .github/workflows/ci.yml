@@ -58,6 +58,10 @@ jobs:
           	option band '5g'
           EOF
           printf '{"network":{"lan":{"device":"lan1"},"wan":{"device":"wan"}}}' > "$ROOT/etc/board.json"
+          # A pure AP may only write an encrypted wireless config when the key is provisioned:
+          # without it the plan is blocked (see `wifisync_core::wifi_key`).
+          mkdir -p "$ROOT/etc/wifisync/secrets"
+          printf 'ci-test-passphrase' > "$ROOT/etc/wifisync/secrets/default"
           cat > "$ROOT/etc/config/wifisync" <<'EOF'
           config wifisync 'main'
           	option roles_configured '1'

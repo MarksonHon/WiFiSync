@@ -87,6 +87,132 @@ pub fn probe(paths: &Paths, target: &str) -> Result<Value, String> {
     invoke(paths, "probe.connectivity", json!({ "target": target }))
 }
 
+/// Read a password: without echo on a terminal, one line from stdin otherwise.
+fn read_password(prompt: &str) -> Result<String, String> {
+    let tty = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+    let mut saved: Option<libc::termios> = None;
+    if tty {
+        eprint!("{}", prompt);
+        unsafe {
+            let mut term: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(libc::STDIN_FILENO, &mut term) == 0 {
+                saved = Some(term);
+                term.c_lflag &= !libc::ECHO;
+                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &term);
+            }
+        }
+    }
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    if let Some(term) = saved {
+        unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &term) };
+        eprintln!();
+    }
+    read.map_err(|e| format!("reading the password failed: {}", e))?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// `wifisync account list|add <name>|passwd <name>|remove <name>`
+pub fn account(paths: &Paths, action: &str, username: Option<&str>) -> Result<Value, String> {
+    match action {
+        "list" => invoke(paths, "account.list", json!({})),
+        "add" | "passwd" => {
+            let username =
+                username.ok_or_else(|| format!("usage: wifisync account {} <name>", action))?;
+            let password = read_password("Password: ")?;
+            invoke(
+                paths,
+                &format!("account.{}", action),
+                json!({ "username": username, "password": password }),
+            )
+        }
+        "remove" => {
+            let username =
+                username.ok_or_else(|| "usage: wifisync account remove <name>".to_string())?;
+            invoke(paths, "account.remove", json!({ "username": username }))
+        }
+        other => Err(format!("unknown account subcommand `{}`", other)),
+    }
+}
+
+/// `wifisync secret list|set <reference>|remove <reference>`
+///
+/// The value is read without echo, is never passed as a command line argument and is never printed
+/// back: the secret store is the only place a value lives.
+pub fn secret(paths: &Paths, action: &str, reference: Option<&str>) -> Result<Value, String> {
+    match action {
+        "list" => invoke(paths, "secret.list", json!({})),
+        "set" => {
+            let reference =
+                reference.ok_or_else(|| "usage: wifisync secret set <reference>".to_string())?;
+            let value = read_password("Secret: ")?;
+            invoke(
+                paths,
+                "secret.set",
+                json!({ "reference": reference, "value": value }),
+            )
+        }
+        "remove" => {
+            let reference =
+                reference.ok_or_else(|| "usage: wifisync secret remove <reference>".to_string())?;
+            invoke(paths, "secret.remove", json!({ "reference": reference }))
+        }
+        other => Err(format!("unknown secret subcommand `{}`", other)),
+    }
+}
+
+/// `wifisync link [status]` / `link set <key> <value>` / `link password [--clear]`
+pub fn link(paths: &Paths, args: &[String]) -> Result<Value, String> {
+    let arg = |index: usize| args.get(index).map(|s| s.as_str());
+    match arg(0).unwrap_or("status") {
+        "status" => Ok(json!({
+            "settings": invoke(paths, "link.get", json!({}))?,
+            "status": invoke(paths, "link.status", json!({}))?,
+        })),
+        "set" => {
+            let (key, value) = (
+                arg(1).ok_or_else(|| {
+                    "usage: wifisync link set <endpoint|username|port|bind> <value>".to_string()
+                })?,
+                arg(2).ok_or_else(|| "missing value".to_string())?,
+            );
+            let params = match key {
+                "endpoint" => json!({ "controller_endpoint": value }),
+                "username" => json!({ "controller_username": value }),
+                "bind" => json!({ "controller_bind": value }),
+                "port" => json!({
+                    "controller_port": value
+                        .parse::<u64>()
+                        .map_err(|_| format!("`{}` is not a valid port", value))?
+                }),
+                other => return Err(format!("unknown link setting `{}`", other)),
+            };
+            invoke(paths, "link.set", params)
+        }
+        "password" => {
+            if arg(1) == Some("--clear") {
+                return invoke(paths, "link.set", json!({ "clear_password": true }));
+            }
+            let password = read_password("Controller password: ")?;
+            invoke(
+                paths,
+                "link.set",
+                json!({ "controller_password": password }),
+            )
+        }
+        other => Err(format!("unknown link subcommand `{}`", other)),
+    }
+}
+
+/// `wifisync lan [report|list]`
+pub fn lan(paths: &Paths, action: &str) -> Result<Value, String> {
+    match action {
+        "report" => invoke(paths, "lan.report", json!({})),
+        "list" => invoke(paths, "lan.list", json!({})),
+        other => Err(format!("unknown lan subcommand `{}`", other)),
+    }
+}
+
 /// Print JSON (for the shell / LuCI).
 pub fn print_json(value: &Value) {
     match serde_json::to_string_pretty(value) {

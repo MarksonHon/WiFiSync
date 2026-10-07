@@ -29,6 +29,7 @@ are in [`BUILDING.md`](BUILDING.md).
 | R9 | AP by default syncs the network information distributed by the Controller (including Wi-Fi); the Wi-Fi source is one of three choices | Sources: `controller_self` / `gateway` / `custom`; a source device reporting "no Wi-Fi" disables that source; choosing `custom` while AP and Controller are on the **same device** also modifies that device's Wi-Fi | `core::wifi_source`, `core::profile` | the three sources switch and disable correctly; the same-device `custom` case generates the right wireless configuration (with double confirmation) |
 | R10 | Not hard-coded: reserve multi-bridge / cross-device VLAN bridge sync | Plan structures are always **lists** (`Vec<BridgePlan>`, `vlans[]`, `bridges[]`); by default exactly one `br-lan` is produced | `core::bridge`, `core::profile` | unit tests cover multi-bridge + VLAN tagged/untagged relations; no hard-coded single-bridge branch |
 | R11 | **The initial network parameters must be backed up before the service starts and restored before it stops** | Lifecycle hooks: `pre_start` → create the **immutable initial baseline** `initial/` on first run (+ a rolling snapshot per start); `pre_stop` → **synchronously restore** from the baseline before exiting; includes dirty-flag detection, integrity verification, and `managed_only`/`full` restore scopes | `core::backup`, `sys::snapshot`, `sys::restore`, `etc/init.d/wifisync` | after one start/stop cycle the network configuration diff against the initial baseline is 0; after `kill -9` the next start detects the dirty state and warns/restores |
+| R12 | The Controller is the **forwarding centre**: it listens on port 6550 (configurable) and has its own accounts; AP and Gateway log in with them, except over loopback (same device); the Gateway reports its LAN bridge, network, DHCP range and IPv6 policy | TCP + JSON lines, PBKDF2/HMAC challenge-response with mutual proof, ChaCha20-Poly1305 frames, loopback exemption, periodic `sync`; see §7.1 | `core::link`, `core::lan`, `sys::lan`, `wifisync::{link,accounts}`, `daemon/link_glue` | login with a wrong/missing password fails; a loopback AP/Gateway syncs without an account; the Controller holds the Gateway LAN report and forwards it to admitted APs |
 
 **Cross-cutting principles**
 
@@ -107,7 +108,7 @@ driven by the daemon lifecycle hooks.
 **Security model (why there is no TLS)**
 
 * Local API: UNIX socket `/var/run/wifisync/wifisync.sock`, mode `0600`, root only;
-* Between nodes: HMAC-SHA256 authentication + ChaCha20-Poly1305 payload encryption (pure Rust);
+* Between nodes (the Controller link, §7.1): account login proven with HMAC-SHA256 over a PBKDF2 key, then ChaCha20-Poly1305 frames (pure Rust); loopback peers need no login;
 * **TLS is deliberately not introduced**: `openssl-sys` is painful under musl/cross-compilation,
   `ring` does not support MIPS, and `aws-lc-rs` requires cmake. HTTPS for the web UI is left to
   OpenWrt's own uhttpd.
@@ -146,6 +147,11 @@ The architecture mapping table and the CI workflows are documented in
 * **Relay (no mesh)**: `wpa_supplicant(STA)` upstream + `hostapd(AP)` downstream; layer-2
   transparency via `relayd`, or routed mode; 4-address/WDS optional. When 802.11r is restricted
   on the relay link, fall back to `ft_over_ds`.
+* **Client steering** is a separate, optional subsystem — see [`STEERING.md`](STEERING.md). It adds a
+  runtime actuation layer on top of this configuration plane and does not change anything described
+  above; it is off by default. ⚠️ The 802.11v row in the table above is an **open item**: `STEERING.md`
+  §5.1 records that OpenWrt emits hostapd `bss_transition=1` from the uci option `bss_transition`
+  while `ieee80211v` has no handler, so these parameters must be verified on the target build.
 
 ---
 
@@ -155,15 +161,30 @@ The architecture mapping table and the CI workflows are documented in
 
 | Source | How it is obtained | UI disable condition | Effect on devices |
 |--------|--------------------|----------------------|-------------------|
-| `controller_self` | read the Controller's own uci `wireless` + the actual iwinfo state | disabled when the Controller reports "no Wi-Fi" | does not change the Controller's own Wi-Fi (only used as a template pushed to APs) |
+| `controller_self` | read the Controller's own uci `wireless` (`wifi-iface`: SSID/encryption/band/channel) | disabled when the Controller reports "no Wi-Fi" | does not change the Controller's own Wi-Fi; its real profile is pushed to the admitted APs, and when it has no Wi-Fi interface configured the generated default SSID is used instead |
 | `gateway` | read-only fetch of the Gateway's Wi-Fi profile (address + credentials entered by the user; **never written back to the Gateway**) | disabled when the Gateway reports "no Wi-Fi" / nothing is selected / the fetch fails | does not change the Gateway |
-| `custom` | the user defines SSID, encryption, PSK, band/channel, width, KVR and `mobility_domain` manually in LuCI | none (always available) | ⚠️ if the AP and Controller are the **same device**, that device's Wi-Fi is modified as well (double confirmation + dry-run preview + apply-guard required) |
+| `custom` | the user defines SSID, encryption, PSK, band/channel, width, KVR and `mobility_domain` manually in LuCI (a blank SSID or `mobility_domain` is derived, see below) | none (always available) | ⚠️ if the AP and Controller are the **same device**, that device's Wi-Fi is modified as well (double confirmation + dry-run preview + apply-guard required) |
 
 * Disabling is **validated twice**: greyed out in LuCI *and* rejected by the daemon (to prevent bypassing).
 * The local Wi-Fi only enters the write plan when "Controller and AP are the same device" and the
   source is `custom`; in all other cases the Controller-side diff is 0.
 * Source priority/fallback is configurable, e.g. whether a failed `gateway` fetch falls back to
   `controller_self` (by default there is no automatic fallback, only an alert).
+* **The SSID and the mobility domain are derived, not hard-coded.** A blank SSID becomes
+  `Home_Wi-Fi_<6 random hex digits>` (generated once and persisted under `/etc/wifisync/`), and a
+  blank `mobility_domain` is derived from the SSID with FNV-1a (4 hex digits), so every AP of the
+  same network computes the same value with no coordination. Renaming the network therefore changes
+  the domain on all APs at once, and an explicitly configured value always wins.
+* **The Wi-Fi key is distributed, but never inside the profile.** The Controller ships it in a
+  separate `secrets` section of the sync answer — the profile itself travels through LuCI
+  (`profile.publish`), and key material must not. The AP stores it in `/etc/wifisync/secrets/`
+  (0600, root only); on the Controller's own device the key is read straight from its own
+  `wireless` config instead. The write plan carries only a secret **reference**, substituted
+  immediately before the `uci` write, so the value never reaches the dry-run text, the logs or the
+  UI. An encrypted network whose key is missing or unusable **blocks the plan** and `apply` refuses
+  (`wifisync_core::wifi_key`: 8–63 characters, or 64 hex digits for a raw PSK).
+* Keys are provisioned with `wifisync secret set <reference>` (value read from stdin, never an
+  argument), and listed without values with `wifisync secret list`.
 
 **Distributed content: `NetworkProfile` (list-based and extensible)**
 
@@ -206,8 +227,10 @@ The architecture mapping table and the CI workflows are documented in
 3. The administrator **explicitly** clicks "approve" → the Controller distributes the
    `NetworkProfile`; clicking "reject" adds it to a blacklist and the AP never writes local
    configuration.
-4. Credentials: a pre-shared key + heartbeat HMAC-SHA256 (with `chacha20poly1305` encrypting the
-   payload); **TLS is not used** (see the dependency constraints in §3).
+4. Credentials: a Controller **account** (name + password) proven with HMAC-SHA256, then
+   `chacha20poly1305` encrypting the frames; **TLS is not used** (see the dependency constraints
+   in §3). The full protocol is in §7.1. A device whose roles share the Controller's device connects
+   over loopback and is admitted without verification.
 
 **Controller ↔ Gateway connectivity (confirmed by the user separately)**
 
@@ -220,6 +243,39 @@ The architecture mapping table and the CI workflows are documented in
 
 > The Controller does not participate in data-plane forwarding; the Gateway's LAN interface
 > selection is only used for topology identification and probe-target inference.
+
+### 7.1 Controller link (AP / Gateway ↔ Controller, R12)
+
+The Controller is the forwarding centre. AP and Gateway nodes are TCP clients; they never talk to
+each other.
+
+| Item | Design |
+|------|--------|
+| Listener | Controller role only: `controller_bind` (default `0.0.0.0`) and `controller_port` (default **6550**), both changeable in LuCI/CLI. The listener follows the configuration within a second. With a specific, non-loopback bind address an extra `127.0.0.1` listener is added so that same-device nodes keep the login-free path |
+| Framing | one JSON object per line (same style as the local socket); frames are limited to 4 KiB before the login and 512 KiB after it; a started frame must complete within 15 s; at most 32 concurrent connections and 8 per source address; 10 s handshake window; 120 s idle timeout. A session ends as soon as its account is removed or re-keyed |
+| Accounts | `/etc/wifisync/accounts.json` (0600), managed on the Controller only (`wifisync account …` or LuCI). Per account: random salt + PBKDF2-HMAC-SHA256 key (4096 iterations); the password is never stored or sent. There are **no default accounts**, so a remote node cannot connect until one is created. Names: 1–32 of `A-Za-z0-9-_.:`; passwords: 8–128 characters |
+| Login | `hello` → `challenge{salt,iter,nonce}` → `auth{cnonce,proof}` → `ready{proof}`. Both proofs are HMAC-SHA256 over the nonces and the device id, so the node also verifies the Controller. Unknown users get a decoy salt (no user enumeration) and a failed login is answered after 1 s |
+| Encryption | after login every frame is `{"n":seq,"d":hex(ChaCha20-Poly1305(json))}` under a per-session key; direction and sequence number are authenticated, so replay, reordering and tampering are rejected |
+| **Loopback** | when the peer address is loopback (`127.0.0.0/8`, `::1`, mapped forms) the node shares the device with the Controller: **no login and no encryption**. A loopback AP is also admitted automatically (an explicit *reject* still wins). A client refuses a login-free answer on a non-loopback connection (no downgrade) |
+| Node address | a node uses `controller_endpoint` (`host[:port]`, port 6550 if omitted); if empty and the device takes the Controller role it uses `127.0.0.1:<controller_port>`. The account is `controller_username`; the password lives in `/etc/wifisync/secrets/` and is write-only through the API |
+| `sync` | every 15 s (retry back-off 5 → 60 s) a node sends its identity (`device_id`, roles, MAC, hostname, model, radios), the profile version it holds and — **Gateway role** — its LAN report. The answer carries the AP admission state and, for an **approved AP only**, the newer `NetworkProfile` and the Gateway LAN reports the Controller holds |
+| Persistence and limits | an AP is written to `state.json` only when it is new or its state changes (flash wear); at most 64 devices may wait for admission (512 in total) and 16 Gateways report, each report is a few KiB and is dropped after 24 h of silence; LAN reports live in memory and are refreshed by the Gateways |
+| AP side | the admission state is mirrored into the AP's own registry, which is what `apply` checks; the received profile is merged by version; the forwarded LAN information is only displayed |
+
+**Gateway LAN report** (`wifisync lan report`, read-only; sources `/etc/config/network`,
+`/etc/config/dhcp`, sysfs `brif`, and `ubus call network.interface.<lan> status` when available):
+
+| Field | Content |
+|-------|---------|
+| `bridge` | bridge name, logical interface, whether it exists, member ports |
+| `ipv4` | protocol, address, netmask/prefix, network in CIDR form |
+| `dhcp` | enabled, `start`/`limit`, computed first/last leasable address, lease time, `dhcp_option`s |
+| `ipv6` | policy (`disabled`, `slaac`, `dhcpv6`, `slaac_dhcpv6`, `dhcpv6_stateful`, `relay`), `dhcpv6`/`ra`/`ra_management`/`ndp`, `ip6assign`, ULA prefix, `wan6` protocol, runtime addresses and prefixes |
+
+Security notes: without TLS an eavesdropper who records a login can try passwords offline (the
+proof is an HMAC under the PBKDF2 key), so use strong passwords and keep the port inside the LAN;
+nothing opens the port in the firewall (zero intrusion), so nodes in another firewall zone need an
+explicit rule. The link only moves information; it never writes the local network by itself.
 
 ---
 
@@ -300,7 +356,7 @@ enable_bridge = roles.ap && !roles.gateway && !roles.controller    // "pure AP" 
 
 * Gateway / Controller **do not trigger** a network rollback (zero-intrusion principle); they only alert.
 * Configuration: `failsafe.enabled` (default `0`), `failsafe_timeout` (default `300s`),
-  `failsafe_action` (`revert`|`reboot`), `failsafe_keep_ssid`, heartbeat endpoint and PSK.
+  `failsafe_action` (`revert`|`reboot`), `failsafe_keep_ssid`, heartbeat endpoint (defaults to the Controller address; it is probed over TCP on the link port).
 
 ---
 
@@ -326,6 +382,9 @@ wifisync daemon [--no-restore-on-stop] [--json-log]
 wifisync status | plan | apply | confirm | revert
 wifisync roles [<role>...] | probe ...
 wifisync admission list|approve|reject|revoke
+wifisync account list|add|passwd|remove [name]     # Controller accounts
+wifisync link [status] | link set endpoint|username|port|bind <v> | link password [--clear]
+wifisync lan [report|list]
 wifisync backup list|verify|create|prune
 wifisync restore [--full] [--snapshot <path>]
 wifisync ubus ...        # rpcd exec plugin mode
@@ -340,7 +399,7 @@ wifisync ubus ...        # rpcd exec plugin mode
 | **M0** Feasibility | De-risk three technical areas | ① musl static cross-compilation PoC and size measurement ② bridge/port netlink PoC ③ rpcd shim + empty LuCI page ④ hostapd KVR parameters working under `mac80211_hwsim` | `docs/spike-*.md`, runnable PoCs | all 4 PoCs run on QEMU OpenWrt x86/64 | 3–4 days |
 | **M1** Core logic library | Pure logic, unit-testable, no syscalls | configuration model (UCI/JSON both ways), role decision, capability abstraction, **bridge policy (pure AP only) + multi-bridge/VLAN list model**, KVR planner, relay planner, **Wi-Fi source parser**, `NetworkProfile` versioning and merge, **admission state machine**, failsafe state machine | `crates/wifisync-core` + tests | 100% of critical branches covered; `cargo test` green on the host | 6–8 days |
 | **M2** System adapter layer | Mostly read-only probing + writes only on the AP side | read-only: uci/netifd/netlink/iwinfo capabilities and topology, **Gateway "LAN interface" selection (record only, never modify)**, connectivity probes; **snapshots and restore: full `uci export` + `iw`/`ip -j` dumps + sha256 manifest + atomic write + restore executor**; writes (AP only): staging/commit, netifd reload, rtnetlink bridge/member setup, hostapd/wpa_supplicant rendering, `wpad` check; VLAN availability probing | `crates/wifisync-sys` | non-AP dry-run diff is always 0; the AP completes "admit → distribute → apply → connect"; **snapshot/restore works standalone (manual tampering is detected)** | 7–9 days |
-| **M3** Daemon and safety rails | Long-running service + admission + distribution + rollback | service loop, UNIX-socket JSON-RPC, device heartbeat (PSK-HMAC), **admission service (pending/approve/reject)**, **profile distribution and version negotiation**, apply-guard dead-man timer, link-watchdog (AP only), `revert` engine, procd self-healing, **lifecycle hooks (pre_start backup / pre_stop restore / synchronous SIGTERM shutdown / dirty flag)** | `crates/wifisync`, `etc/init.d/wifisync` | a rejected/not-yet-admitted AP does not change its local configuration; an AP whose link is lost restores the default network after N seconds and can rejoin; **after one start/stop cycle the network is back to its initial state** | 8–10 days |
+| **M3** Daemon and safety rails | Long-running service + admission + distribution + rollback | service loop, UNIX-socket JSON-RPC, Controller link (account login, `sync`, §7.1), **admission service (pending/approve/reject)**, **profile distribution and version negotiation**, apply-guard dead-man timer, link-watchdog (AP only), `revert` engine, procd self-healing, **lifecycle hooks (pre_start backup / pre_stop restore / synchronous SIGTERM shutdown / dirty flag)** | `crates/wifisync`, `etc/init.d/wifisync` | a rejected/not-yet-admitted AP does not change its local configuration; an AP whose link is lost restores the default network after N seconds and can rejoin; **after one start/stop cycle the network is back to its initial state** | 8–10 days |
 | **M4** LuCI application | Complete visual configuration | overview, role wizard, **Gateway (LAN port selection, zero-intrusion note)**, **Controller (admission list + Wi-Fi source choice)**, **connectivity confirmation**, bridge (visible to pure AP only), KVR, relay, failsafe, **backup and restore**, diagnostics/logs; ACL and menu registration | `luci/luci-app-wifisync` | the whole flow can be completed without a CLI; the initial baseline can be viewed/verified/restored manually | 8–10 days |
 | **M5** Packaging and release | Installable ipk/apk + multiple architectures | OpenWrt package Makefile, init.d, default uci configuration, rpcd ACL, multi-target CI builds, `DEPENDS`=wpad/kmod-* | `openwrt/package/wifisync/`, CI artifacts | the official SDK builds a package that works right after opkg/apk install | 4–5 days |
 | **M6** Integration and acceptance | Real-topology validation | QEMU+hwsim three-node (GW/Controller/pure AP), relay scenario, roaming latency measurement, **non-intrusiveness regression (non-AP devices diff = 0)**, **start/stop loop regression (configuration is zeroed after start→stop)**, power-loss/link-loss regression, spot checks on real hardware | test report | R1–R11 all accepted | 7–9 days |
@@ -398,14 +457,14 @@ wifisync ubus ...        # rpcd exec plugin mode
 | Milestone | Status | Output |
 |-----------|--------|--------|
 | M0 Feasibility | ✅ done (toolchain / arch mapping / build chain) | `scripts/openwrt-arch.sh`, `scripts/sdk-env.sh`, `scripts/build-musl.sh`, three CI workflows |
-| M1 Core logic library | ✅ done | `wifisync-core`: `role` / `capability` / `bridge` / `wifi_source` / `profile` / `admission` / `backup` / `failsafe` / `plan` / `uci_file` / `config` (62 unit tests) |
-| M2 System adapter layer | ✅ done (read-only probing + snapshot/restore + AP write path) | `wifisync-sys`: `sysfs` / `iwinfo` / `uci` / `netifd` / `snapshot` / `restore` / `state` / `exec` / `paths` (23 unit tests) |
-| M3 Daemon and safety rails | ✅ mainly done | the single `wifisync` binary: `daemon` (lifecycle + admission + distribution + watchdog), `rpc`, `ctl`, `ubus` (rpcd plugin), `secrets`, `probe`, `signals`, `log` (14 unit tests) |
+| M1 Core logic library | ✅ done | `wifisync-core`: `role` / `capability` / `bridge` / `wifi_source` / `profile` / `admission` / `backup` / `failsafe` / `plan` / `uci_file` / `config` / `lan` / `link` (91 unit tests) |
+| M2 System adapter layer | ✅ done (read-only probing + snapshot/restore + AP write path) | `wifisync-sys`: `sysfs` / `iwinfo` / `uci` / `netifd` / `snapshot` / `restore` / `state` / `exec` / `paths` / `lan` (39 unit tests) |
+| M3 Daemon and safety rails | ✅ mainly done | the single `wifisync` binary: `daemon` (lifecycle + admission + distribution + watchdog), `rpc`, `link` (Controller link), `accounts`, `ctl`, `ubus` (rpcd plugin), `secrets`, `probe`, `signals`, `log` (44 unit tests) |
 | M4 LuCI application | ✅ first version done | `luci-app-wifisync`, 8 pages + menu/ACL (JS passes `node --check`) |
 | M5 Packaging and release | ✅ first version done | `openwrt/package/wifisync` (Makefile + init.d + default uci + rpcd bridge + ACL), three workflows |
 | M6 Integration and acceptance | ⏳ pending | needs QEMU+hwsim and real hardware; the drill procedure is described in [`BUILDING_zh-cn.md`](BUILDING_zh-cn.md) |
 
-Code size: **all 101 unit tests pass** (`wifisync-core` 64, `wifisync-sys` 23, `wifisync` 14), `clippy -D warnings` is clean, `cargo fmt --check` passes.
+Code size: **all 174 unit tests pass** (`wifisync-core` 91, `wifisync-sys` 39, `wifisync` 44), `clippy -D warnings` is clean, `cargo fmt --check` passes.
 
 ### 15.2 Deviations from the initial plan (and why)
 
@@ -413,6 +472,7 @@ Code size: **all 101 unit tests pass** (`wifisync-core` 64, `wifisync-sys` 23, `
 |---------------|-----------------------|--------|
 | tokio async runtime | **std threads + blocking I/O** | the service model is simple enough; this removes a huge runtime and makes the binary smaller and musl more stable |
 | rtnetlink for bridge setup | **uci + ubus/netifd** | the idiomatic OpenWrt way, which naturally handles DSA/swconfig differences |
+| device heartbeat with a pre-shared key (PSK-HMAC) | **account login (PBKDF2 + HMAC challenge-response), encrypted frames, loopback exemption** (§7.1) | the Controller needs to tell nodes apart and be managed from LuCI; accounts are revocable per node, and same-device roles must not need credentials |
 | httparse for the local API | **one JSON per line over a UNIX socket** | one less protocol surface and two fewer dependencies |
 | static linking (`+crt-static`) | **dynamic linking against the device's musl** (`-crt-static`) | matches the official `rust-values.mk` and yields smaller binaries; the static option is still available outside `[profile.release]` |
 | detect the full wpad via the package manager | **search for `mobility_domain` + `ieee80211r` in the hostapd/wpad binary** | opkg (ipk) and apk use different database formats, while the binary signature works on both |
@@ -426,7 +486,7 @@ Code size: **all 101 unit tests pass** (`wifisync-core` 64, `wifisync-sys` 23, `
    validate "non-AP zero changes" against a real netifd;
 2. validate the `pre_stop` restore timing on real hardware (procd sends SIGTERM → the daemon
    restores synchronously → `stop_service` performs one more idempotent restore);
-3. land the Controller ↔ AP heartbeat message protocol (the `seal`/`open` helpers in `secrets.rs`
-   are ready but not wired up yet);
+3. validate the Controller link (§7.1) on QEMU and real hardware: login across firewall zones, the
+   port rule, and a failover heartbeat that uses the link state instead of a TCP probe;
 4. if MIPS targets are needed, evaluate alternatives to `ring` (the project currently only
    commits to x86 / ARM64).

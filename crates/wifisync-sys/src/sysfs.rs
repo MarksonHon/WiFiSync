@@ -7,6 +7,7 @@ use crate::paths::Paths;
 use serde_json::Value;
 use std::path::Path;
 use wifisync_core::capability::{Capabilities, PortInfo, PortKind, RadioInfo};
+use wifisync_core::profile::WifiProfile;
 
 /// Read `/etc/board.json` (OpenWrt's device description file).
 pub fn read_board_json(paths: &Paths) -> Option<Value> {
@@ -216,6 +217,103 @@ pub fn radios_from_uci(wireless_text: &str) -> Vec<RadioInfo> {
     radios
 }
 
+/// Key reference used for the PSK of this device's own network.
+///
+/// The PSK itself is deliberately never read into [`WifiProfile`]: the profile is published
+/// through LuCI, while the key must only travel over the encrypted Controller link.
+/// [`own_wifi_key`] reads it separately.
+pub const CONTROLLER_PSK_REF: &str = "controller";
+
+/// Build the Wi-Fi profile from **this device's own** `/etc/config/wireless`.
+///
+/// This is the `controller_self` information source: the real SSID/encryption/band/channel instead
+/// of a placeholder. Returns `None` when no AP-mode `wifi-iface` carries an SSID, in which case the
+/// caller falls back to the generated default SSID.
+pub fn controller_wifi_profile(wireless_text: &str) -> Option<WifiProfile> {
+    let sections = wifisync_core::uci_file::parse(wireless_text);
+
+    for iface in sections.iter().filter(|s| s.kind == "wifi-iface") {
+        // An absent `mode` means AP (that is how OpenWrt configures hostapd).
+        if iface.option("mode").is_some_and(|mode| mode != "ap") {
+            continue;
+        }
+        let Some(ssid) = iface
+            .option("ssid")
+            .map(str::trim)
+            .filter(|ssid| !ssid.is_empty())
+        else {
+            continue;
+        };
+
+        let device_name = iface.option("device").unwrap_or("radio0");
+        let device = sections
+            .iter()
+            .find(|s| s.kind == "wifi-device" && s.name == device_name);
+
+        let mut profile = WifiProfile::template(device_name);
+        profile.ssid = ssid.to_string();
+        profile.psk_ref = CONTROLLER_PSK_REF.to_string();
+        if let Some(encryption) = iface.option("encryption") {
+            profile.auth = encryption.to_string();
+        }
+        if let Some(device) = device {
+            profile.channel = device
+                .option("channel")
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|c| *c > 0);
+            profile.band = device
+                .option("band")
+                .map(str::to_string)
+                .or_else(|| match device.option("hwmode") {
+                    Some("11a") => Some("5g".to_string()),
+                    Some("11g") | Some("11b") => Some("2g".to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| profile.band.clone());
+        }
+        return Some(profile);
+    }
+
+    None
+}
+
+/// The PSK of this device's own network, read from the same `wifi-iface` that
+/// [`controller_wifi_profile`] uses.
+///
+/// It is kept out of [`WifiProfile`] on purpose: the profile is published through LuCI, while this
+/// value must only travel over the encrypted Controller link (or stay in the secret store).
+pub fn own_wifi_key(wireless_text: &str) -> Option<String> {
+    let sections = wifisync_core::uci_file::parse(wireless_text);
+
+    for iface in sections.iter().filter(|s| s.kind == "wifi-iface") {
+        // An absent `mode` means AP (that is how OpenWrt configures hostapd).
+        if iface.option("mode").is_some_and(|mode| mode != "ap") {
+            continue;
+        }
+        if iface
+            .option("ssid")
+            .map(str::trim)
+            .filter(|ssid| !ssid.is_empty())
+            .is_none()
+        {
+            continue;
+        }
+        for option in ["key", "password", "psk"] {
+            if let Some(value) = iface
+                .option(option)
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+            {
+                return Some(value.to_string());
+            }
+        }
+        // The configured network is open (or keyless): nothing to ship.
+        return None;
+    }
+
+    None
+}
+
 /// Probe a full capability snapshot.
 ///
 /// **The authoritative source for wireless presence is the kernel wireless subsystem**
@@ -332,6 +430,57 @@ config wifi-device 'radio1'
         assert!(contains(b"hello mobility_domain world", b"mobility_domain"));
         assert!(!contains(b"hello", b"mobility_domain"));
         assert!(!contains(b"", b"x"));
+    }
+
+    #[test]
+    fn the_devices_own_wifi_is_read_from_uci() {
+        let wireless = "\
+config wifi-device 'radio1'
+\toption band '5g'
+\toption channel '44'
+
+config wifi-iface 'default_radio1'
+\toption device 'radio1'
+\toption mode 'ap'
+\toption ssid 'My Home'
+\toption encryption 'sae-mixed'
+";
+        let profile = controller_wifi_profile(wireless).unwrap();
+
+        assert_eq!(profile.radio, "radio1");
+        assert_eq!(profile.ssid, "My Home");
+        assert_eq!(profile.auth, "sae-mixed");
+        assert_eq!(profile.band, "5g");
+        assert_eq!(profile.channel, Some(44));
+        // The key itself must never travel in the profile.
+        assert_eq!(profile.psk_ref, CONTROLLER_PSK_REF);
+    }
+
+    #[test]
+    fn a_station_interface_is_never_used_as_the_access_point_profile() {
+        let wireless = "\
+config wifi-device 'radio0'
+\toption band '2g'
+
+config wifi-iface 'sta'
+\toption device 'radio0'
+\toption mode 'sta'
+\toption ssid 'Upstream'
+";
+        assert!(controller_wifi_profile(wireless).is_none());
+    }
+
+    #[test]
+    fn an_unconfigured_radio_yields_no_profile() {
+        let wireless = "\
+config wifi-device 'radio0'
+\toption band '2g'
+
+config wifi-iface 'default_radio0'
+\toption device 'radio0'
+\toption mode 'ap'
+";
+        assert!(controller_wifi_profile(wireless).is_none());
     }
 
     #[test]

@@ -15,6 +15,11 @@
 					"backup_verify",
 					"failsafe_get",
 					"profile_get",
+					"link_get",
+					"link_status",
+					"account_list",
+					"lan_report",
+					"lan_list",
 					"version"
 				]
 			},
@@ -42,7 +47,11 @@
 					"backup_create",
 					"backup_prune",
 					"failsafe_set",
-					"profile_publish"
+					"profile_publish",
+					"link_set",
+					"account_add",
+					"account_passwd",
+					"account_remove"
 				]
 			},
 			"uci": [ "wifisync" ]

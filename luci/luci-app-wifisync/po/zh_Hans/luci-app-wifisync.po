@@ -758,6 +758,12 @@ msgstr "Gateway 角色不会修改任何网络配置，这里只记录接口用�
 msgid "No snapshot yet: start the service first (the initial baseline is created automatically) or create one with `wifisync backup create`"
 msgstr "还没有任何快照：请先启动服务（会自动建立初始化基线）或用 `wifisync backup create` 手动创建"
 
+msgid "Leave blank to generate a name automatically (Home_Wi-Fi_xxxxxx)"
+msgstr "留空则自动生成名称（Home_Wi-Fi_xxxxxx）"
+
+msgid "Leave blank to derive it from the SSID (4 hex digits otherwise)"
+msgstr "留空则按 SSID 自动派生（否则请填 4 位 16 进制）"
+
 msgid "%{address} is reachable"
 msgstr "%{address} 可达"
 
@@ -769,3 +775,197 @@ msgstr "无法解析 %{address}：%{error}"
 
 msgid "ICMP reply: %{output}"
 msgstr "ICMP 回应：%{output}"
+
+# Controller link, accounts and LAN report
+
+msgid "Not used (neither AP nor Gateway role)"
+msgstr "未使用（既不是 AP 也不是 Gateway 角色）"
+
+msgid "Controller address not configured"
+msgstr "尚未配置 Controller 地址"
+
+msgid "Connecting"
+msgstr "正在连接"
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Connection failed"
+msgstr "连接失败"
+
+msgid "IPv6 disabled on the LAN"
+msgstr "LAN 未启用 IPv6"
+
+msgid "SLAAC only"
+msgstr "仅 SLAAC"
+
+msgid "DHCPv6 only"
+msgstr "仅 DHCPv6"
+
+msgid "SLAAC + DHCPv6"
+msgstr "SLAAC + DHCPv6"
+
+msgid "Stateful DHCPv6"
+msgstr "有状态 DHCPv6"
+
+msgid "Relay"
+msgstr "中继"
+
+msgid "LAN bridge"
+msgstr "LAN 网桥"
+
+msgid "not present"
+msgstr "不存在"
+
+msgid "Bridge ports"
+msgstr "网桥成员端口"
+
+msgid "IPv4 network"
+msgstr "IPv4 网络"
+
+msgid "DHCP server"
+msgstr "DHCP 服务器"
+
+msgid "range unknown"
+msgstr "地址范围未知"
+
+msgid "lease time"
+msgstr "租期"
+
+msgid "IPv6 policy"
+msgstr "IPv6 策略"
+
+msgid "IPv6 details"
+msgstr "IPv6 详情"
+
+msgid "upstream"
+msgstr "上游"
+
+msgid "Controller listener saved; it is restarted within a second"
+msgstr "Controller 监听设置已保存，将在一秒内重新监听"
+
+msgid "No account yet: APs and Gateways on other devices cannot connect"
+msgstr "尚无账号：其他设备上的 AP 与 Gateway 无法连接"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete account"
+msgstr "删除账号"
+
+msgid "Account deleted"
+msgstr "账号已删除"
+
+msgid "Reported at"
+msgstr "上报时间"
+
+msgid "Controller link"
+msgstr "Controller 连接"
+
+msgid "Listening on"
+msgstr "监听地址"
+
+msgid "not listening"
+msgstr "未监听"
+
+msgid "Listen address"
+msgstr "监听地址（绑定）"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Save listener"
+msgstr "保存监听设置"
+
+msgid "AP and Gateway devices connect here (TCP, port 6550 by default) and log in with an account below. Devices on this same device connect over loopback and need no account. Remember to allow the port in the firewall if the devices are in another zone."
+msgstr "AP 与 Gateway 设备通过 TCP 连接到这里（默认端口 6550），并使用下方的账号登录。与 Controller 在同一设备上的角色走 loopback，无需账号。如果设备位于其他防火墙区域，请记得在防火墙中放行该端口。"
+
+msgid "Accounts"
+msgstr "账号"
+
+msgid "Account"
+msgstr "账号"
+
+msgid "Created"
+msgstr "创建时间"
+
+msgid "Password"
+msgstr "密码"
+
+msgid "Create account"
+msgstr "创建账号"
+
+msgid "Account created"
+msgstr "账号已创建"
+
+msgid "Change password"
+msgstr "修改密码"
+
+msgid "Password changed"
+msgstr "密码已修改"
+
+msgid "The password must have at least 8 characters. It is never sent over the network: devices prove that they know it, and everything after the login is encrypted."
+msgstr "密码至少 8 个字符。密码不会在网络上传输：设备只证明自己知道密码，登录之后的所有通信都经过加密。"
+
+msgid "LAN information from Gateways"
+msgstr "Gateway 上报的 LAN 信息"
+
+msgid "No Gateway has reported yet"
+msgstr "尚无 Gateway 上报"
+
+msgid "Gateways report the bridge that carries the LAN, its network, the DHCP range and the IPv6 policy. The Controller forwards this information to admitted APs."
+msgstr "Gateway 会上报承载 LAN 的网桥、网络信息、DHCP 范围和 IPv6 策略。Controller 会把这些信息转发给已准入的 AP。"
+
+msgid "LAN information reported to the Controller"
+msgstr "上报给 Controller 的 LAN 信息"
+
+msgid "last report"
+msgstr "最近上报"
+
+msgid "The Gateway reports the bridge that carries the LAN, its network, the DHCP range and the IPv6 policy to the Controller periodically. The information is read from the configuration; nothing is changed."
+msgstr "Gateway 会定期向 Controller 上报承载 LAN 的网桥、网络信息、DHCP 范围和 IPv6 策略。这些信息只从配置中读取，不会修改任何内容。"
+
+msgid "This device does not take the Gateway role, so nothing is reported. The values below are only what would be reported."
+msgstr "本设备未承担 Gateway 角色，因此不会上报。下面只是将会上报的内容。"
+
+msgid "Controller listening on"
+msgstr "Controller 监听于"
+
+msgid "Accounts / Gateways / sessions"
+msgstr "账号 / Gateway / 会话"
+
+msgid "Link to the Controller"
+msgstr "到 Controller 的连接"
+
+msgid "AP and Gateway devices report to the Controller, which forwards the information. Devices on the Controller itself connect over loopback without an account."
+msgstr "AP 与 Gateway 设备向 Controller 上报，由 Controller 转发信息。与 Controller 同一设备上的角色通过 loopback 连接，无需账号。"
+
+msgid "empty = this device is the Controller"
+msgstr "留空 = 本设备就是 Controller"
+
+msgid "unchanged"
+msgstr "保持不变"
+
+msgid "Controller link saved"
+msgstr "Controller 连接设置已保存"
+
+msgid "same device, no login needed"
+msgstr "同一设备，无需登录"
+
+msgid "logged in"
+msgstr "已登录"
+
+msgid "Last error"
+msgstr "最近错误"
+
+msgid "Controller address"
+msgstr "Controller 地址"
+
+msgid "Save Controller link"
+msgstr "保存 Controller 连接"
+
+msgid "Forget password"
+msgstr "清除密码"
+
+msgid "AP and Gateway devices connect to the Controller on port %d by default. An account created on the Controller is needed, except when this device is the Controller itself (loopback)."
+msgstr "AP 与 Gateway 设备默认连接 Controller 的 %d 端口，需要使用在 Controller 上创建的账号；本设备自己就是 Controller 时（loopback）除外。"

@@ -33,6 +33,28 @@ impl StateStore {
         Ok(id)
     }
 
+    /// Read (or generate on first use) the default SSID used when neither the device nor the user
+    /// provides one: `Home_Wi-Fi_` plus 6 random hex digits.
+    ///
+    /// It is persisted because a fresh value on every call would rewrite the network on every plan.
+    pub fn default_ssid(&self) -> SysResult<String> {
+        let mut value = self.load()?;
+        if let Some(existing) = value.get("default_ssid").and_then(|v| v.as_str()) {
+            if !existing.trim().is_empty() {
+                return Ok(existing.to_string());
+            }
+        }
+
+        let generated = format!(
+            "{}{}",
+            wifisync_core::wifi_source::DEFAULT_SSID_PREFIX,
+            random_hex(3)?
+        );
+        value["default_ssid"] = json!(generated);
+        self.save(&value)?;
+        Ok(generated)
+    }
+
     /// Read the state JSON (returns the default structure when absent).
     pub fn load(&self) -> SysResult<Value> {
         let path = self.paths.state_file();

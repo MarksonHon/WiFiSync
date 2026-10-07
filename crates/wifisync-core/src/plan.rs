@@ -28,6 +28,10 @@ pub enum UciOpKind {
     Delete,
     /// `uci add_list file.section.option=value`
     AddList,
+    /// `uci set file.section.option=<secret>`: the stored value is a **secret-store reference**,
+    /// substituted at apply time. It is never rendered by [`UciOp::describe`], so the dry-run
+    /// text, the logs and the UI stay free of key material.
+    SetSecret,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +59,23 @@ impl UciOp {
             section: section.into(),
             option: Some(option.into()),
             value: Some(value.into()),
+        }
+    }
+
+    /// Write a value taken from the secret store. The stored value is the **reference**, not the
+    /// secret itself: the caller substitutes the real value immediately before applying.
+    pub fn set_secret(
+        file: impl Into<String>,
+        section: impl Into<String>,
+        option: impl Into<String>,
+        reference: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: UciOpKind::SetSecret,
+            file: file.into(),
+            section: section.into(),
+            option: Some(option.into()),
+            value: Some(reference.into()),
         }
     }
 
@@ -118,6 +139,14 @@ impl UciOp {
                 self.section,
                 self.option.as_deref().unwrap_or("")
             ),
+            // Never the value: the dry-run text and the UI must not learn a secret.
+            UciOpKind::SetSecret => format!(
+                "uci set {}.{}.{}='<secret:{}>'",
+                self.file,
+                self.section,
+                self.option.as_deref().unwrap_or(""),
+                self.value.as_deref().unwrap_or("")
+            ),
         }
     }
 }
@@ -134,12 +163,25 @@ pub struct WritePlan {
     pub bridges: Vec<BridgePlan>,
     /// Target radios for Wi-Fi writes (empty = no wireless writes).
     pub wifi_radios: Vec<String>,
+    /// Reasons that make the plan **refuse to apply** (a missing or unusable Wi-Fi key, for
+    /// instance): `apply` then refuses outright instead of writing a half-configured network.
+    pub blocked: Vec<Message>,
 }
 
 impl WritePlan {
     /// The single "zero intrusion" criterion.
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
+    }
+
+    /// Whether the plan must not be applied as it stands.
+    pub fn is_blocked(&self) -> bool {
+        !self.blocked.is_empty()
+    }
+
+    /// Record a reason that prevents applying this plan.
+    pub fn block(&mut self, reason: Message) {
+        self.blocked.push(reason);
     }
 
     pub fn managed_keys(&self) -> Vec<String> {
@@ -191,6 +233,10 @@ pub struct PlanInput<'a> {
     pub wifi: Option<&'a ResolvedWifi>,
     /// Optional profile (for later bridge/VLAN extensions; only `notes` is read for now).
     pub profile: Option<&'a NetworkProfile>,
+    /// The Wi-Fi key looked up from the secret store, when one is configured. `None` means the
+    /// secret is absent, in which case an encrypted network blocks the plan
+    /// (see [`crate::wifi_key`]).
+    pub wifi_key: Option<&'a str>,
 }
 
 /// Build the write plan — the program's only source of network writes.
@@ -260,8 +306,30 @@ pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
     }
 
     // ── 2. wireless: only devices with the AP role write (requirement 7 / 8 / 9)───────────────
+    // A required key that is missing or unusable blocks the plan: writing `encryption=sae-mixed`
+    // without a usable key leaves the AP unable to authenticate anyone, which is worse than not
+    // touching the wireless configuration at all.
+    let key_problem = input
+        .wifi
+        .and_then(|resolved| crate::wifi_key::check(&resolved.profile.auth, input.wifi_key).err());
+    if let Some(problem) = key_problem {
+        let wifi = input.wifi.map(|resolved| &resolved.profile);
+        plan.block(
+            Message::new(problem.message_key())
+                .param(
+                    "ssid",
+                    wifi.map(|profile| profile.ssid.clone()).unwrap_or_default(),
+                )
+                .param(
+                    "reference",
+                    wifi.map(|profile| profile.psk_ref.clone())
+                        .unwrap_or_default(),
+                ),
+        );
+    }
+
     if input.roles.ap {
-        if let Some(resolved) = input.wifi {
+        if let Some(resolved) = input.wifi.filter(|_| key_problem.is_none()) {
             let wifi = &resolved.profile;
             let radio = wifi.radio.clone();
             plan.notes.extend(resolved.notes.clone());
@@ -290,13 +358,26 @@ pub fn build_write_plan(input: &PlanInput<'_>) -> WritePlan {
                 "encryption",
                 &wifi.auth,
             ));
-            if wifi.auth != "none" {
-                plan.ops.push(UciOp::set(
+            if crate::wifi_key::requires_key(&wifi.auth) {
+                // The op carries the **reference**; `apply` substitutes the real key immediately
+                // before writing, so key material never reaches the dry-run text, the logs or
+                // the UI.
+                plan.ops.push(UciOp::set_secret(
                     "wireless",
                     &wifi_section,
-                    "key_ref",
+                    "key",
                     &wifi.psk_ref,
                 ));
+                // Remove what earlier versions wrote: `key_ref` is not a valid OpenWrt key, so a
+                // leftover would keep hostapd from starting.
+                plan.ops
+                    .push(UciOp::delete("wireless", &wifi_section, "key_ref"));
+            } else {
+                // An open network must carry no key at all.
+                plan.ops
+                    .push(UciOp::delete("wireless", &wifi_section, "key"));
+                plan.ops
+                    .push(UciOp::delete("wireless", &wifi_section, "key_ref"));
             }
             plan.ops.push(UciOp::set(
                 "wireless",
@@ -409,6 +490,8 @@ mod tests {
         }
     }
 
+    const TEST_KEY: &str = "correct horse battery";
+
     fn input<'a>(
         roles: Roles,
         caps: &'a Capabilities,
@@ -421,6 +504,9 @@ mod tests {
             extra_bridges: Vec::new(),
             wifi,
             profile: None,
+            // A usable key, so tests exercise the normal (writable) path; the blocked path has its
+            // own test.
+            wifi_key: (wifi.is_some()).then_some(TEST_KEY),
         }
     }
 

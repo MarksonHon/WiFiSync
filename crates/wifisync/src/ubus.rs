@@ -142,6 +142,42 @@ pub fn method_table() -> Value {
         json!({ "lines": "integer" }),
         "read the tail of the service log",
     );
+    add("link_get", json!({}), "read the Controller link settings");
+    add(
+        "link_set",
+        json!({
+            "controller_endpoint": "string",
+            "controller_username": "string",
+            "controller_password": "string",
+            "clear_password": "boolean",
+            "controller_port": "integer",
+            "controller_bind": "string",
+        }),
+        "set the Controller link (address, account, listen port and address)",
+    );
+    add("link_status", json!({}), "Controller link state");
+    add("account_list", json!({}), "list the Controller accounts");
+    add(
+        "account_add",
+        json!({ "username": "string", "password": "string" }),
+        "create a Controller account",
+    );
+    add(
+        "account_passwd",
+        json!({ "username": "string", "password": "string" }),
+        "change the password of a Controller account",
+    );
+    add(
+        "account_remove",
+        json!({ "username": "string" }),
+        "delete a Controller account",
+    );
+    add(
+        "lan_report",
+        json!({}),
+        "this device's LAN report (read-only)",
+    );
+    add("lan_list", json!({}), "LAN reports held by the Controller");
     add("version", json!({}), "version information");
 
     json!({ "wifisync": { "methods": methods } })
@@ -177,6 +213,15 @@ pub fn to_rpc_method(name: &str) -> String {
         "bridge_preview" => "bridge.preview",
         "gateway_set" => "gateway.set",
         "logs_tail" => "logs.tail",
+        "link_get" => "link.get",
+        "link_set" => "link.set",
+        "link_status" => "link.status",
+        "account_list" => "account.list",
+        "account_add" => "account.add",
+        "account_passwd" => "account.passwd",
+        "account_remove" => "account.remove",
+        "lan_report" => "lan.report",
+        "lan_list" => "lan.list",
         // Unambiguous methods pass through unchanged
         other => other,
     };
@@ -294,6 +339,15 @@ mod tests {
             "failsafe.set",
             "profile.get",
             "profile.publish",
+            "link.get",
+            "link.set",
+            "link.status",
+            "account.list",
+            "account.add",
+            "account.passwd",
+            "account.remove",
+            "lan.report",
+            "lan.list",
             "logs.tail",
             "version",
         ];

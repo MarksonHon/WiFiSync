@@ -2,6 +2,8 @@
 //! and the watchdog.
 
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 use wifisync_core::admission::{AdmissionEntry, AdmissionRegistry, AdmissionState};
 use wifisync_core::backup::{RestoreMode, SnapshotKind};
@@ -9,7 +11,8 @@ use wifisync_core::bridge::{bridge_disabled_reason, plan_bridges, BridgePlanInpu
 use wifisync_core::capability::Capabilities;
 use wifisync_core::config::WifisyncConfig;
 use wifisync_core::failsafe::{Decision, Failsafe, FailsafeEvent};
-use wifisync_core::plan::{build_write_plan, PlanInput, WritePlan};
+use wifisync_core::link::GatewayLan;
+use wifisync_core::plan::{build_write_plan, PlanInput, UciOp, UciOpKind, WritePlan};
 use wifisync_core::profile::NetworkProfile;
 use wifisync_core::role::Roles;
 use wifisync_core::wifi_source::{self, ResolvedWifi, SourceContext, WifiSourceConfig};
@@ -21,7 +24,11 @@ use wifisync_sys::state::StateStore;
 use wifisync_sys::uci::Uci;
 use wifisync_sys::Paths;
 
+use crate::accounts::AccountStore;
+use crate::secrets::SecretStore;
 use crate::{log_error, log_info, log_warn, probe, rpc, signals};
+
+mod link_glue;
 
 #[derive(Debug, Clone, Default)]
 pub struct DaemonOptions {
@@ -43,6 +50,16 @@ pub struct Daemon {
     admissions: Mutex<AdmissionRegistry>,
     profile: Mutex<NetworkProfile>,
     options: DaemonOptions,
+    /// Controller accounts (Controller role) and the secrets this device uses to log in.
+    accounts: AccountStore,
+    secrets: SecretStore,
+    /// Listener and client state of the Controller link.
+    link: Mutex<link_glue::LinkState>,
+    link_kick: AtomicBool,
+    /// Controller: LAN reports received from Gateways, by device id.
+    gateway_lans: Mutex<BTreeMap<String, GatewayLan>>,
+    /// AP: Gateway LAN information forwarded by the Controller.
+    remote_lans: Mutex<Vec<GatewayLan>>,
 }
 
 impl Daemon {
@@ -95,6 +112,13 @@ impl Daemon {
         }
         let admissions = state.admissions().unwrap_or_default();
         let failsafe = Failsafe::for_roles(config.failsafe.clone(), &config.roles);
+        // Start from the persisted version so that the first publish is newer than the empty profile
+        let profile = NetworkProfile {
+            version: state.profile_version().unwrap_or(0),
+            ..NetworkProfile::default()
+        };
+        let accounts = AccountStore::new(paths.accounts_file());
+        let secrets = SecretStore::new(paths.secrets_dir());
 
         Ok(Self {
             paths,
@@ -106,8 +130,14 @@ impl Daemon {
             caps: RwLock::new(caps),
             failsafe: Mutex::new(failsafe),
             admissions: Mutex::new(admissions),
-            profile: Mutex::new(NetworkProfile::default()),
+            profile: Mutex::new(profile),
             options,
+            accounts,
+            secrets,
+            link: Mutex::new(link_glue::LinkState::default()),
+            link_kick: AtomicBool::new(false),
+            gateway_lans: Mutex::new(BTreeMap::new()),
+            remote_lans: Mutex::new(Vec::new()),
         })
     }
 
@@ -171,6 +201,7 @@ impl Daemon {
 
         // 4. Watchdog (only effective for AP; Failsafe decides internally)
         self.spawn_watchdog();
+        self.spawn_link_threads();
 
         // 5. Service loop: RPC on its own thread, main thread waits for the shutdown signal
         let handler_daemon = Arc::clone(&self);
@@ -277,6 +308,7 @@ impl Daemon {
         }
         failsafe.on_event(FailsafeEvent::Confirmed, now());
         let _ = roles;
+        self.kick_link();
         Ok(())
     }
 
@@ -376,6 +408,16 @@ impl Daemon {
                 .unwrap_or(false),
             local_wifi_change_confirmed: cfg.local_wifi_change_confirmed,
             gateway_profile: None,
+            // The device's own wireless configuration, so that `controller_self` distributes the
+            // real network instead of a placeholder.
+            controller_profile: self
+                .uci
+                .read_config_file("wireless")
+                .ok()
+                .flatten()
+                .as_deref()
+                .and_then(wifisync_sys::sysfs::controller_wifi_profile),
+            default_ssid: self.state.default_ssid().ok(),
         }
     }
 
@@ -385,6 +427,11 @@ impl Daemon {
         let caps = self.caps_snapshot();
         let wifi = self.resolve_wifi()?;
         let profile = self.profile.lock().unwrap().clone();
+        // The key never travels inside the plan: it is looked up here and substituted right
+        // before the write (see `apply`).
+        let wifi_key = wifi
+            .as_ref()
+            .and_then(|resolved| self.resolve_secret(&resolved.profile.psk_ref));
         Ok(build_write_plan(&PlanInput {
             roles: cfg.roles,
             caps: &caps,
@@ -392,10 +439,30 @@ impl Daemon {
             extra_bridges: Vec::new(),
             wifi: wifi.as_ref(),
             profile: Some(&profile),
+            wifi_key: wifi_key.as_deref(),
         }))
     }
 
     /// Apply the write plan: touch the system only when non-empty, and arm the apply-guard.
+    /// Substitute secret references with their values immediately before writing.
+    ///
+    /// The result is a throwaway list: it is never attached to the plan, so key material cannot
+    /// leak into the dry-run text, the logs or the UI.
+    fn inject_secrets(&self, ops: &[UciOp]) -> Result<Vec<UciOp>, String> {
+        let mut resolved = ops.to_vec();
+        for op in &mut resolved {
+            if op.kind != UciOpKind::SetSecret {
+                continue;
+            }
+            let reference = op.value.clone().unwrap_or_default();
+            let value = self
+                .resolve_secret(&reference)
+                .ok_or_else(|| format!("the secret `{}` is not provisioned", reference))?;
+            op.value = Some(value);
+        }
+        Ok(resolved)
+    }
+
     pub fn apply(&self) -> Result<Value, String> {
         let cfg = self.config_snapshot();
 
@@ -408,6 +475,12 @@ impl Daemon {
         }
 
         let plan = self.current_plan()?;
+        if plan.is_blocked() {
+            // An encrypted network without a usable key must never be applied: the AP would come up
+            // unable to authenticate anyone.
+            let reasons: Vec<String> = plan.blocked.iter().map(|m| m.to_string()).collect();
+            return Err(format!("refusing to apply: {}", reasons.join(", ")));
+        }
         if plan.is_empty() {
             // Zero-intrusion path: no uci write, no reload
             return Ok(json!({
@@ -435,10 +508,12 @@ impl Daemon {
             failsafe.config().clone()
         };
 
-        // The actual write
+        // The actual write. Secret references are substituted here, so the value never reaches the
+        // plan, the dry-run text, the logs or the UI.
+        let ops = self.inject_secrets(&plan.ops)?;
         let executed = self
             .uci
-            .apply_ops(&plan.ops)
+            .apply_ops(&ops)
             .map_err(|e| format!("writing uci failed: {}", e))?;
         if plan.reload_wifi {
             wifisync_sys::netifd::reload_wifi()
@@ -542,7 +617,7 @@ impl Daemon {
             "version" => Ok(json!({
                 "version": wifisync_core::VERSION,
                 "protocol": 1,
-                "features": ["kvr", "admission", "backup", "failsafe", "multi_bridge", "vlan"],
+                "features": ["kvr", "admission", "backup", "failsafe", "multi_bridge", "vlan", "controller_link", "lan_report"],
             })),
             "status" => Ok(self.status()),
             "capabilities" => Ok(serde_json::to_value(self.caps_snapshot()).unwrap_or(Value::Null)),
@@ -690,12 +765,54 @@ impl Daemon {
                 Ok(serde_json::to_value(profile).unwrap_or(Value::Null))
             }
             "profile.publish" => self.rpc_profile_publish(params),
+            "link.get" => self.rpc_link_get(),
+            "link.set" => self.rpc_link_set(params),
+            "link.status" => Ok(self.link_status()),
+            "secret.list" | "secret.set" | "secret.remove" => self.rpc_secret(method, params),
+            "account.list" | "account.add" | "account.passwd" | "account.remove" => {
+                self.rpc_account(method, params)
+            }
+            "lan.report" => Ok(
+                serde_json::to_value(self.collect_lan(&self.config_snapshot()))
+                    .unwrap_or(Value::Null),
+            ),
+            "lan.list" => self.rpc_lan_list(),
             "logs.tail" => {
                 let lines = params.get("lines").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
                 let path = self.paths.log_file();
                 let content = std::fs::read_to_string(path).unwrap_or_default();
                 let tail: Vec<&str> = content.lines().rev().take(lines).collect();
                 Ok(json!({ "lines": tail.into_iter().rev().collect::<Vec<_>>() }))
+            }
+            other => Err(format!("unknown method `{}`", other)),
+        }
+    }
+
+    /// Secret store access for the CLI (and LuCI). **Values are never returned**, only references:
+    /// this API exists to provision and inspect, not to read secrets back out.
+    fn rpc_secret(&self, method: &str, params: &Value) -> Result<Value, String> {
+        let reference = params
+            .get("reference")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        match method {
+            "secret.list" => Ok(json!({ "references": self.secrets.list() })),
+            "secret.set" => {
+                if !wifisync_core::link::valid_secret_reference(reference) {
+                    return Err(
+                        "the reference must be 1-64 characters of [A-Za-z0-9-_.:]".to_string()
+                    );
+                }
+                let value = params
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                self.secrets.put(reference, value).map_err(rpc::sys_err)?;
+                Ok(json!({ "reference": reference, "stored": true }))
+            }
+            "secret.remove" => {
+                self.secrets.remove(reference).map_err(rpc::sys_err)?;
+                Ok(json!({ "reference": reference, "removed": true }))
             }
             other => Err(format!("unknown method `{}`", other)),
         }
@@ -744,6 +861,7 @@ impl Daemon {
                 "dirty": self.state.dirty_reason().is_some(),
                 "dirty_reason": self.state.dirty_reason(),
             },
+            "link": self.link_status(),
             "sync_mode": cfg.sync_mode,
             "gateway_lan_ifaces": cfg.gateway_lan_ifaces,
             "restore_mode": cfg.restore_mode,
@@ -777,6 +895,7 @@ impl Daemon {
             let mut failsafe = self.failsafe.lock().unwrap();
             *failsafe = Failsafe::for_roles(cfg.failsafe.clone(), &cfg.roles);
         }
+        self.kick_link();
         Ok(json!({
             "roles": roles,
             "value": roles.to_uci_value(),

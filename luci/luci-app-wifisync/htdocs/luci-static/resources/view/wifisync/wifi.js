@@ -30,7 +30,7 @@ return view.extend({
 		}
 		renderPlan();
 
-		var domain = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': '1a2b' });
+		var domain = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': '' });
 		var flags = {};
 		[ 'ieee80211k', 'ieee80211v', 'ieee80211r', 'ft_over_ds' ].forEach(function(name) {
 			flags[name] = E('input', { 'type': 'checkbox', 'checked': '' });
@@ -47,7 +47,8 @@ return view.extend({
 				return;
 			}
 			var custom = {
-				ssid: 'WifiSync', auth: 'sae-mixed', psk_ref: 'custom', band: '5g',
+				// Blank SSID and mobility domain: the backend derives them from the SSID.
+				ssid: '', auth: 'sae-mixed', psk_ref: 'custom', band: '5g',
 				mobility_domain: domain.value.trim(),
 				ieee80211k: flags.ieee80211k.checked,
 				ieee80211v: flags.ieee80211v.checked,
@@ -72,6 +73,8 @@ return view.extend({
 				ws.kv(_('Device radios'), E('span', {}, (caps.radios || []).map(function(r) {
 					return r.name + (r.band ? '(' + r.band + ')' : '');
 				}).join(', ') || _('none'))),
+				E('div', { 'class': 'cbi-section-descr' },
+					_('Leave blank to derive it from the SSID (4 hex digits otherwise)')),
 				ws.kv(_('Mobility domain'), domain),
 			].concat(endpoints).concat([
 				E('div', { 'class': 'cbi-value' }, [

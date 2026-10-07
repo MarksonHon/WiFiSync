@@ -21,7 +21,14 @@ config wifisync 'main'
 	list gateway_lan_ifaces ''
 	# Connectivity probe targets (the program only probes; it never changes routes/NAT/firewall)
 	option gateway_endpoint ''
+	# AP / Gateway -> Controller link. Empty controller_endpoint means "this device" (needs the Controller role,
+	# reached over loopback without an account); otherwise host[:port], port 6550 when omitted.
 	option controller_endpoint ''
+	# Account of the remote Controller; the password is kept in /etc/wifisync/secrets, never here
+	option controller_username ''
+	# Controller role: where it listens (accounts are managed with `wifisync account` or in LuCI)
+	option controller_port '6550'
+	option controller_bind '0.0.0.0'
 
 # Wi-Fi info source: controller_self (the controller itself) / gateway (read-only pull from the gateway) / custom
 config wifi_source 'source'
@@ -33,14 +40,16 @@ config wifi_source 'source'
 # Only takes effect when kind='custom'.
 # Note: if this device also acts as an AP (AP and Controller on the same device),
 # applying custom info modifies the local wireless config and requires explicit user confirmation (local_wifi_change_confirmed=1).
+# Leave `ssid` and `mobility_domain` empty to have them derived automatically:
+# the SSID becomes Home_Wi-Fi_<6 random hex digits>, and the mobility domain follows the SSID.
 config custom_wifi 'custom'
-	option ssid 'WifiSync'
+	option ssid ''
 	option auth 'sae-mixed'
 	option psk_ref 'custom'
 	option band '5g'
 	option channel ''
 	option hidden '0'
-	option mobility_domain '1a2b'
+	option mobility_domain ''
 	option ieee80211k '1'
 	option ieee80211v '1'
 	option ieee80211r '1'

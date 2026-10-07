@@ -4,14 +4,15 @@
 //! external commands), so it can be fully unit-tested on a host. Every decision about "whether to
 //! touch the network, and which parts" lives here:
 //!
-//! * [`role`]: role set and bridging policy (`enable_bridge = ap && !gateway && !controller`)
-//! * [`bridge`]: bridge planning (list structure, reserving room for multi-bridge / VLAN)
-//! * [`wifi_source`]: the three Wi-Fi information sources (controller itself / gateway / custom)
-//! * [`profile`]: `NetworkProfile` (network profile pushed by the Controller to the AP)
-//! * [`admission`]: new AP admission state machine
-//! * [`backup`]: initial baseline / snapshots / restore plan
-//! * [`failsafe`]: dead-man timer + heartbeat watchdog
-//! * [`plan`]: combine all of the above into a single "write plan" (always empty for non-AP roles)
+//! * [`role`][]: role set and bridging policy (`enable_bridge = ap && !gateway && !controller`)
+//! * [`bridge`][]: bridge planning (list structure, reserving room for multi-bridge / VLAN)
+//! * [`wifi_source`][]: the three Wi-Fi information sources (controller itself / gateway / custom)
+//! * [`profile`][]: `NetworkProfile` (network profile pushed by the Controller to the AP)
+//! * [`admission`][]: new AP admission state machine
+//! * [`backup`][]: initial baseline / snapshots / restore plan
+//! * [`failsafe`][]: dead-man timer + heartbeat watchdog
+//! * [`link`][]: Controller link model (AP / Gateway ↔ Controller) and [`lan`][], the Gateway's LAN report
+//! * [`plan`][]: combine all of the above into a single "write plan" (always empty for non-AP roles)
 
 pub mod admission;
 pub mod backup;
@@ -20,11 +21,14 @@ pub mod capability;
 pub mod config;
 pub mod error;
 pub mod failsafe;
+pub mod lan;
+pub mod link;
 pub mod message;
 pub mod plan;
 pub mod profile;
 pub mod role;
 pub mod uci_file;
+pub mod wifi_key;
 pub mod wifi_source;
 
 pub use error::{CoreError, CoreResult};
