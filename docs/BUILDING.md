@@ -70,7 +70,9 @@ OpenWrt Rust build (`feeds/packages/lang/rust/rust-values.mk`):
 | `CARGO_PROFILE_RELEASE_*` | `lto=true / opt-level=z / codegen-units=1 / debug=false` | same as rust-values.mk |
 
 Size gate: **3 MiB** (for small-flash devices). `release.yml` fails when the
-limit is exceeded, measured on the binary that goes into the package.
+limit is exceeded; the size is read back out of the built package, because the
+SDK enables `CONFIG_AUTOREMOVE` and deletes `build_dir` as soon as the build
+finishes.
 
 ## 3. Path B: official package format (.apk / .ipk, slow)
 
@@ -95,7 +97,17 @@ make defconfig
 export WIFISYNC_HOST_RUST=1
 rustup target add x86_64-unknown-linux-musl     # the triple of the target above
 
-make package/wifisync/compile V=s -j$(nproc)
+# The directory target builds exactly this one package. NO_DEPS drops its runtime dependencies
+# (wpad, kmod-br-netfilter): the device's package manager resolves those, while building them here
+# drags in hostapd and the whole kernel.
+make package/feeds/wifisync/wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
+# The LuCI application and its translations (architecture independent). luci-base is built first
+# because it provides the po2lmo host tool that luci.mk compiles the translations with; NO_DEPS
+# then keeps the application build from resolving wifisync (and with it hostapd and the kernel).
+make package/feeds/luci/luci-base/compile V=s -j$(nproc)
+make package/feeds/wifisync/luci-app-wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
 find bin/packages -name '*.apk' -o -name '*.ipk'
 ```
 
@@ -109,8 +121,8 @@ instead of hours.
 > Starting with OpenWrt 25.12 the default package manager is **apk** (it was
 > opkg before), and the artifact format follows the branch automatically:
 > 25.12 produces `.apk`, 24.10 produces `.ipk`.
-> `release.yml` builds these packages when a `v*` tag is pushed; a manual
-> dispatch runs the same build without publishing.
+> `release.yml` builds exactly these packages, from the SDK it downloads for the architecture; it is
+> started by hand with the tag to publish (see section 5).
 
 To build inside your own OpenWrt build tree:
 
@@ -145,7 +157,7 @@ probe, plan, snapshot, and restore logic on a development machine.
 | Workflow | Trigger | Contents |
 |----------|---------|----------|
 | `ci.yml` | push / PR / manual | Source checks only: `fmt` + `clippy -D warnings` + `cargo test` + the end-to-end smoke test, all compiled for `x86_64-unknown-linux-musl` |
-| `release.yml` | tag `v*` (manual: build only) | Official **.ipk (24.10) / .apk (25.12)** packages for 7 architectures + the architecture independent `luci-app-wifisync` packages, the binary size gate, sha256 and the GitHub Release upload |
+| `release.yml` | manual only: the tag is typed into the dispatch form | Official **.ipk (24.10) / .apk (25.12)** packages for 7 architectures + the architecture independent `luci-app-wifisync` packages, the binary size gate, sha256 and the GitHub Release upload |
 
 `release.yml` is the only place that builds installable packages, and it
 publishes exactly two OpenWrt releases: **24.10** as `.ipk` and **25.12** as
@@ -155,6 +167,20 @@ per release for the LuCI application and its translations (those packages are
 architecture independent, hence one tarball per release instead of one per
 architecture). The exact SDK release each package came from is recorded in the
 `package-info.json` inside every tarball.
+
+### Releasing by hand
+
+`release.yml` has no tag-push trigger, because the tag is an input. A run
+
+1. validates the tag (letters, digits, `.`, `_`, `-` only) and checks whether it exists: an unknown
+   tag is created at the commit the run was dispatched from, a known one decides which commit is
+   built;
+2. builds the packages for that commit, and
+3. deletes a release left over from an earlier run, then publishes this one — the tag itself is
+   never rewritten.
+
+A single failed architecture is retried with "Re-run failed jobs" on the run page instead of
+building a subset, so a published release is never incomplete.
 
 ### The "zero intrusion" invariants enforced by the smoke test
 
@@ -217,17 +243,21 @@ A: Trim it as needed: `[profile.release]` already enables
 LTO/`opt-level=z`/`panic=abort`/`strip`. If it still exceeds the gate, consider
 nightly `-Z build-std` with `panic_immediate_abort` (not enabled in CI yet).
 
-**Q: Why are packages only built on tag pushes?**
-A: They are release artifacts (14 architecture jobs produce a few hundred MB), so
-`ci.yml` stays limited to source checks and `release.yml` owns the packaging. A
-manual dispatch builds the same artifacts without publishing, which is enough to
-check the feed wiring.
+**Q: How do I publish a release?**
+A: Run the `release` workflow from the Actions page and type the tag to publish
+(for example `v0.1.0`). The tag is created at the commit the run was dispatched
+from when it does not exist yet, and a release that already exists for that tag
+is deleted and replaced. The packages are release artifacts (14 architecture
+jobs produce a few hundred MB), which is why `ci.yml` stays limited to source
+checks and `release.yml` owns the packaging.
 
 **Q: How long does one package build take?**
-A: `release.yml` uses the host Rust toolchain (`WIFISYNC_HOST_RUST=1`), so the Rust part is a
-normal cross-compile; the time is dominated by the SDK downloads, the feeds and the target's own
-package dependencies. Building the SDK's `rust/host` instead would add 30–90 minutes per
-architecture (rustc + LLVM from source).
+A: `release.yml` uses the host Rust toolchain (`WIFISYNC_HOST_RUST=1`) and builds only the package
+it asked for, so the Rust part is a cross-compile of a few tens of seconds; the time is dominated
+by the SDK download and the feeds. Building the SDK's `rust/host` instead would add 30–90 minutes
+per architecture (rustc + LLVM from source) — which is why `WIFISYNC_HOST_RUST=1` is set on every
+build of this package, including the LuCI job, where `wifisync` is built as a dependency of
+`luci-app-wifisync`.
 
 **Q: Which OpenWrt releases are published?**
 A: Only 24.10 (`.ipk` / opkg) and 25.12 (`.apk` / apk), each for the seven

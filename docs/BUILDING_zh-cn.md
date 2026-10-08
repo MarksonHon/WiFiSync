@@ -61,7 +61,8 @@ scripts/build-musl.sh x86_64
 | `--locked` | 使用提交进仓库的 `Cargo.lock` | 可复现 |
 | `CARGO_PROFILE_RELEASE_*` | `lto=true / opt-level=z / codegen-units=1 / debug=false` | 与 rust-values.mk 相同 |
 
-体积门禁：**3 MiB**（小 flash 设备）。由 `release.yml` 对打进包里的二进制做检查，超限即失败。
+体积门禁：**3 MiB**（小 flash 设备）。由 `release.yml` 从打好的包里取回二进制做检查，
+超限即失败——SDK 默认开着 `CONFIG_AUTOREMOVE`，构建一结束就会删掉 `build_dir`。
 
 ## 3. 路径 B：官方包格式（.apk / .ipk，慢）
 
@@ -81,14 +82,27 @@ cp feeds.conf.default feeds.conf
 ./scripts/feeds install -a
 make defconfig
 
-make package/wifisync/compile V=s -j$(nproc)
+# 用宿主机的 Rust 工具链（见下）
+export WIFISYNC_HOST_RUST=1
+rustup target add x86_64-unknown-linux-musl     # 上面 target 对应的 triple
+
+# 目录目标只构建这一个包。NO_DEPS 去掉它的运行时依赖（wpad、kmod-br-netfilter）：
+# 那些由设备上的包管理器解决，在这里构建会连带拉入 hostapd 与整个内核。
+make package/feeds/wifisync/wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
+# LuCI 应用与翻译包（与架构无关）。先构建 luci-base：编译翻译所需的 po2lmo 宿主工具由它提供；
+# 再用 NO_DEPS 阻止应用包构建去解析 wifisync（否则会连带拉入 hostapd 与内核）。
+make package/feeds/luci/luci-base/compile V=s -j$(nproc)
+make package/feeds/wifisync/luci-app-wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
 find bin/packages -name '*.apk' -o -name '*.ipk'
 ```
 
 > OpenWrt 25.12 起默认包管理器是 **apk**，之前是 opkg；产物格式随分支自动变化：
 > 25.12 出 `.apk`，24.10 出 `.ipk`。
-> 这条路会在 SDK 内从源码构建 `rust/host`（rustc 引导），单架构约 30–90 分钟，
-> 因此 `release.yml` 只在**打 tag 时**构建包（手动触发只构建产物、不发布）。
+> `WIFISYNC_HOST_RUST=1` 让 Rust 部分用宿主机工具链编译（上面的 `rustup target add` 提供目标 std），
+> SDK 只负责推导 target 与打包；否则 SDK 会在内部从源码引导 rustc（单架构约 30–90 分钟）。
+> `release.yml` 构建的正是这些包，用手动触发并填上要发布的 tag（见第 5 节）。
 
 如果要在自己的 OpenWrt 构建树里编译：
 
@@ -122,13 +136,25 @@ cargo run -- plan      # 角色为 controller+gateway 时输出 "0 项改动"
 | 工作流 | 触发 | 内容 |
 |--------|------|------|
 | `ci.yml` | push / PR / 手动 | 只做源码检查：`fmt` + `clippy -D warnings` + `cargo test` + 端到端冒烟测试（均按 `x86_64-unknown-linux-musl` 目标编译） |
-| `release.yml` | 打 tag `v*`（手动触发只构建、不发布） | 7 个架构的官方 **.ipk（24.10）/ .apk（25.12）** 包 + 与架构无关的 `luci-app-wifisync` 包、二进制体积门禁、sha256 与 GitHub Release 上传 |
+| `release.yml` | 仅手动触发：在 dispatch 表单里填写 tag | 7 个架构的官方 **.ipk（24.10）/ .apk（25.12）** 包 + 与架构无关的 `luci-app-wifisync` 包、二进制体积门禁、sha256 与 GitHub Release 上传 |
 
 `release.yml` 是唯一构建可安装包的地方，且只发行两个 OpenWrt 版本：**24.10** 出
 `.ipk`、**25.12** 出 `.apk`。每个产物是一个 tarball，命名形如
 `wifisync-<tag>-openwrt-24.10-<架构>.tar.gz`（apk 那条线是 `…-25.12-…`）；此外每个版本各有一个
 `wifisync-<tag>-openwrt-24.10-luci.tar.gz` 装 LuCI 应用与翻译（这些包与架构无关，所以按版本各一份
 而不是按架构各一份）。每个 tarball 里的 `package-info.json` 记录了它来自哪个具体的 SDK 版本。
+
+### 手动发布
+
+`release.yml` 没有 tag 推送触发器，因为 tag 是输入项。一次运行的流程是：
+
+1. 校验 tag（只允许字母、数字、`.`、`_`、`-`）并检查它是否存在：不存在则在本次 dispatch 的
+   commit 上创建，存在则由它决定构建哪个 commit；
+2. 为该 commit 构建包；
+3. 删除该 tag 上一次运行留下的 release，再发布本次的——tag 本身从不被改写。
+
+某个架构单独失败时，用运行页面上的「Re-run failed jobs」重跑，而不是在这里构建一个子集，
+因此发布出去的 release 永远不会是残缺的。
 
 ### 冒烟测试里被强制的「零侵入」不变量
 
@@ -180,9 +206,10 @@ A: `x86/generic` 的 `CPU_TYPE := pentium4`（对应 `i386_pentium4`，Rust 用 
 A: 按需裁剪：`[profile.release]` 已开 LTO/`opt-level=z`/`panic=abort`/`strip`；
 若仍超门禁，可考虑用 nightly 的 `-Z build-std` + `panic_immediate_abort`（CI 里尚未启用）。
 
-**Q: 为什么包只在打 tag 时构建？**
-A: 因为路径 B 要在 SDK 里从源码构建 rustc 引导（30–90 分钟/架构），
-不适合放在每次提交的流水线上；需要检查 feed 接线时可用 `release.yml` 的手动触发（只构建、不发布）。
+**Q: 怎么发布一个版本？**
+A: 在 Actions 页面手动运行 `release` 工作流，并填写要发布的 tag（例如 `v0.1.0`）。
+tag 不存在时会在本次 dispatch 的 commit 上创建；若该 tag 已有 release，则删除后重建。
+包属于发布产物（14 个架构任务会产生数百 MB），因此 `ci.yml` 只做源码检查，打包由 `release.yml` 负责。
 
 **Q: 发行覆盖哪些 OpenWrt 版本？**
 A: 只有 24.10（`.ipk` / opkg）与 25.12（`.apk` / apk），各七个包架构（见第 1 节）。
