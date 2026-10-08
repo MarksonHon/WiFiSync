@@ -461,7 +461,7 @@ wifisync ubus ...        # rpcd exec plugin mode
 | M2 System adapter layer | ✅ done (read-only probing + snapshot/restore + AP write path) | `wifisync-sys`: `sysfs` / `iwinfo` / `uci` / `netifd` / `snapshot` / `restore` / `state` / `exec` / `paths` / `lan` (39 unit tests) |
 | M3 Daemon and safety rails | ✅ mainly done | the single `wifisync` binary: `daemon` (lifecycle + admission + distribution + watchdog), `rpc`, `link` (Controller link), `accounts`, `ctl`, `ubus` (rpcd plugin), `secrets`, `probe`, `signals`, `log` (44 unit tests) |
 | M4 LuCI application | ✅ first version done | `luci-app-wifisync`, 8 pages + menu/ACL (JS passes `node --check`) |
-| M5 Packaging and release | ✅ first version done | `openwrt/package/wifisync` (Makefile + init.d + default uci + rpcd bridge + ACL), three workflows |
+| M5 Packaging and release | ✅ first version done | `openwrt/package/wifisync` (Makefile + init.d + default uci + rpcd bridge + ACL), `ci.yml` + `release.yml` (24.10 `.ipk` / 25.12 `.apk`) |
 | M6 Integration and acceptance | ⏳ pending | needs QEMU+hwsim and real hardware; the drill procedure is described in [`BUILDING_zh-cn.md`](BUILDING_zh-cn.md) |
 
 Code size: **all 174 unit tests pass** (`wifisync-core` 91, `wifisync-sys` 39, `wifisync` 44), `clippy -D warnings` is clean, `cargo fmt --check` passes.

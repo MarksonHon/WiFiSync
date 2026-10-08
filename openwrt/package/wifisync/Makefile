@@ -19,7 +19,14 @@ PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=WiFiSync contributors
 
+# The official Rust flow builds `rust/host` from source (rustc + LLVM, 30–90 minutes).
+# `WIFISYNC_HOST_RUST=1` skips that bootstrap and cross-compiles with a Rust toolchain
+# provided by the host instead (CI installs the target's std with rustup), which builds the
+# same package in minutes.
 PKG_BUILD_DEPENDS:=rust/host
+ifeq ($(WIFISYNC_HOST_RUST),1)
+  PKG_BUILD_DEPENDS:=
+endif
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 
@@ -34,7 +41,7 @@ define Package/wifisync
   CATEGORY:=Network
   TITLE:=WiFiSync — home LAN (wired + wireless) networking tool
   URL:=https://github.com/openwrt-wifisync/wifisync
-  DEPENDS:=$(RUST_ARCH_DEPENDS) +wpad +kmod-br-netfilter
+  DEPENDS:=$(RUST_ARCH_DEPENDS) +libc +libgcc +wpad +kmod-br-netfilter
 endef
 
 define Package/wifisync/description
@@ -85,6 +92,16 @@ define Package/wifisync/prerm
 	[ -x "$${IPKG_INSTROOT}/usr/bin/wifisync" ] || exit 0
 	$${IPKG_INSTROOT}/etc/init.d/wifisync stop >/dev/null 2>&1 || true
 	exit 0
+endef
+
+# The binary links against the device's musl libc and libgcc (rust-values.mk disables crt-static),
+# and package-pack.mk refuses a package whose files need a library that none of its dependencies
+# provides. Both live in the toolchain meta package, which a release build does not build (see the
+# release workflow), so the library names are listed here as well. The official feeds do the same
+# for packages with files they do not build themselves.
+define Package/wifisync/extra_provides
+	echo libc.so
+	echo libgcc_s.so.1
 endef
 
 $(eval $(call BuildPackage,wifisync))

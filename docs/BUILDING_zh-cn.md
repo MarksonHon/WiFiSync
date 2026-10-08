@@ -5,12 +5,16 @@
 本项目有三条构建路径，全部**复用 OpenWrt 官方工具链**，并按 OpenWrt 官方
 「包架构（package architecture）」而非内核架构来产出。
 
+发行只覆盖两个版本：**OpenWrt 24.10**（`.ipk` / opkg）与 **OpenWrt 25.12**
+（`.apk` / apk）；更老的版本既不在测试范围也不发行。
+
 ---
 
-## 1. 支持的架构（OpenWrt 25.12 的全部 x86 / ARM64）
+## 1. 支持的架构（OpenWrt 24.10 / 25.12 的全部 x86 / ARM64）
 
-依据：`downloads.openwrt.org/releases/25.12.0/packages/` 的架构目录
-＋ `openwrt-25.12` 分支各 target 的 `target.mk` 中的 `CPU_TYPE`。
+依据：`downloads.openwrt.org/releases/<版本>/packages/` 的架构目录
+＋ `openwrt-24.10` / `openwrt-25.12` 分支各 target 的 `target.mk` 中的 `CPU_TYPE`。
+两个版本的包架构与 SDK target/subtarget 名称完全一致，即下表这七种。
 
 | OpenWrt 包架构 | SDK target/subtarget | Rust target | `-C target-cpu` |
 |----------------|---------------------|-------------|-----------------|
@@ -35,7 +39,7 @@ scripts/openwrt-arch.sh aarch64_cortex-a53 all
 
 ---
 
-## 2. 路径 A：用 SDK 工具链直接交叉编译（快，CI 每次提交都跑）
+## 2. 路径 A：用 SDK 工具链直接交叉编译（快，本地用）
 
 ```sh
 # 1) 下载官方 SDK 并导出工具链（自动解析 SDK 文件名）
@@ -57,7 +61,8 @@ scripts/build-musl.sh x86_64
 | `--locked` | 使用提交进仓库的 `Cargo.lock` | 可复现 |
 | `CARGO_PROFILE_RELEASE_*` | `lto=true / opt-level=z / codegen-units=1 / debug=false` | 与 rust-values.mk 相同 |
 
-体积门禁：**3 MiB**（小 flash 设备）。CI 会在超限时报错。
+体积门禁：**3 MiB**（小 flash 设备）。由 `release.yml` 从打好的包里取回二进制做检查，
+超限即失败——SDK 默认开着 `CONFIG_AUTOREMOVE`，构建一结束就会删掉 `build_dir`。
 
 ## 3. 路径 B：官方包格式（.apk / .ipk，慢）
 
@@ -77,13 +82,27 @@ cp feeds.conf.default feeds.conf
 ./scripts/feeds install -a
 make defconfig
 
-make package/wifisync/compile V=s -j$(nproc)
+# 用宿主机的 Rust 工具链（见下）
+export WIFISYNC_HOST_RUST=1
+rustup target add x86_64-unknown-linux-musl     # 上面 target 对应的 triple
+
+# 目录目标只构建这一个包。NO_DEPS 去掉它的运行时依赖（wpad、kmod-br-netfilter）：
+# 那些由设备上的包管理器解决，在这里构建会连带拉入 hostapd 与整个内核。
+make package/feeds/wifisync/wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
+# LuCI 应用与翻译包（与架构无关）。先构建 luci-base：编译翻译所需的 po2lmo 宿主工具由它提供；
+# 再用 NO_DEPS 阻止应用包构建去解析 wifisync（否则会连带拉入 hostapd 与内核）。
+make package/feeds/luci/luci-base/compile V=s -j$(nproc)
+make package/feeds/wifisync/luci-app-wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
 find bin/packages -name '*.apk' -o -name '*.ipk'
 ```
 
-> OpenWrt 25.12 起默认包管理器是 **apk**，之前是 opkg；产物格式随分支自动变化。
-> 这条路会在 SDK 内从源码构建 `rust/host`（rustc 引导），单架构约 30–90 分钟，
-> 因此 `openwrt-packages.yml` 只在**手动触发 / 每月定时**时运行。
+> OpenWrt 25.12 起默认包管理器是 **apk**，之前是 opkg；产物格式随分支自动变化：
+> 25.12 出 `.apk`，24.10 出 `.ipk`。
+> `WIFISYNC_HOST_RUST=1` 让 Rust 部分用宿主机工具链编译（上面的 `rustup target add` 提供目标 std），
+> SDK 只负责推导 target 与打包；否则 SDK 会在内部从源码引导 rustc（单架构约 30–90 分钟）。
+> `release.yml` 构建的正是这些包，用手动触发并填上要发布的 tag（见第 5 节）。
 
 如果要在自己的 OpenWrt 构建树里编译：
 
@@ -170,9 +189,14 @@ A: `x86/generic` 的 `CPU_TYPE := pentium4`（对应 `i386_pentium4`，Rust 用 
 A: 按需裁剪：`[profile.release]` 已开 LTO/`opt-level=z`/`panic=abort`/`strip`；
 若仍超门禁，可考虑用 nightly 的 `-Z build-std` + `panic_immediate_abort`（CI 里尚未启用）。
 
-**Q: 为什么要独立的 `openwrt-packages.yml`？**
-A: 因为它必须在 SDK 里从源码构建 rustc 引导（30–90 分钟/架构），
-不适合放在每次提交的流水线上；日常 CI 用路径 A 已经能证明「musl 可编译 + 架构正确」。
+**Q: 怎么发布一个版本？**
+A: 在 Actions 页面手动运行 `release` 工作流，并填写要发布的 tag（例如 `v0.1.0`）。
+tag 不存在时会在本次 dispatch 的 commit 上创建；若该 tag 已有 release，则删除后重建。
+包属于发布产物（14 个架构任务会产生数百 MB），因此 `ci.yml` 只做源码检查，打包由 `release.yml` 负责。
+
+**Q: 发行覆盖哪些 OpenWrt 版本？**
+A: 只有 24.10（`.ipk` / opkg）与 25.12（`.apk` / apk），各七个包架构（见第 1 节）。
+两个分支共用同一份 `scripts/openwrt-arch.sh` 映射，SDK target/subtarget 名称也完全一致。
 
 **Q: 中继模式会在哪里体现？**
 A: 见 [`FRONTEND_zh-cn.md`](FRONTEND_zh-cn.md) 的「Wi-Fi 与 KVR」页说明与

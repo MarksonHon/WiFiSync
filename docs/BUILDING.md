@@ -6,13 +6,18 @@ This project has three build paths. All of them **reuse the official OpenWrt
 toolchain** and produce artifacts keyed by OpenWrt's "package architecture"
 rather than the kernel architecture.
 
+Published releases: **OpenWrt 24.10** (`.ipk` / opkg) and **OpenWrt 25.12**
+(`.apk` / apk). Older releases are not tested and are not published.
+
 ---
 
-## 1. Supported architectures (all x86 / ARM64 from OpenWrt 25.12)
+## 1. Supported architectures (all x86 / ARM64 of OpenWrt 24.10 and 25.12)
 
 Basis: the architecture directories under
-`downloads.openwrt.org/releases/25.12.0/packages/`, plus the `CPU_TYPE` values
-in each target's `target.mk` on the `openwrt-25.12` branch.
+`downloads.openwrt.org/releases/<release>/packages/`, plus the `CPU_TYPE` values
+in each target's `target.mk` on the `openwrt-24.10` / `openwrt-25.12` branches.
+Both releases ship the same seven package architectures below, and the SDK
+target/subtarget names are identical on both branches.
 
 | OpenWrt package arch | SDK target/subtarget | Rust target | `-C target-cpu` |
 |----------------------|----------------------|-------------|-----------------|
@@ -38,7 +43,7 @@ target's SDK can be installed on every target that uses the same `CPU_TYPE`
 
 ---
 
-## 2. Path A: cross-compile directly with the SDK toolchain (fast, runs on every commit in CI)
+## 2. Path A: cross-compile directly with the SDK toolchain (fast, for local work)
 
 ```sh
 # 1) Download the official SDK and export the toolchain (resolves the SDK filename automatically)
@@ -48,6 +53,10 @@ target's SDK can be installed on every target that uses the same `CPU_TYPE`
 scripts/build-musl.sh x86_64
 # artifacts: dist/x86_64/wifisync  +  build-info.json
 ```
+
+This is the fast way to check "does it still compile for a router architecture",
+but it only produces a loose binary — day-to-day source checks live in
+`ci.yml`, and installable packages (path B) are produced by `release.yml`.
 
 Key points where `scripts/build-musl.sh` stays consistent with the official
 OpenWrt Rust build (`feeds/packages/lang/rust/rust-values.mk`):
@@ -60,7 +69,10 @@ OpenWrt Rust build (`feeds/packages/lang/rust/rust-values.mk`):
 | `--locked` | use the `Cargo.lock` committed to the repository | reproducibility |
 | `CARGO_PROFILE_RELEASE_*` | `lto=true / opt-level=z / codegen-units=1 / debug=false` | same as rust-values.mk |
 
-Size gate: **3 MiB** (for small-flash devices). CI fails when the limit is exceeded.
+Size gate: **3 MiB** (for small-flash devices). `release.yml` fails when the
+limit is exceeded; the size is read back out of the built package, because the
+SDK enables `CONFIG_AUTOREMOVE` and deletes `build_dir` as soon as the build
+finishes.
 
 ## 3. Path B: official package format (.apk / .ipk, slow)
 
@@ -81,15 +93,36 @@ cp feeds.conf.default feeds.conf
 ./scripts/feeds install -a
 make defconfig
 
-make package/wifisync/compile V=s -j$(nproc)
+# Build with the host Rust toolchain (see below)
+export WIFISYNC_HOST_RUST=1
+rustup target add x86_64-unknown-linux-musl     # the triple of the target above
+
+# The directory target builds exactly this one package. NO_DEPS drops its runtime dependencies
+# (wpad, kmod-br-netfilter): the device's package manager resolves those, while building them here
+# drags in hostapd and the whole kernel.
+make package/feeds/wifisync/wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
+# The LuCI application and its translations (architecture independent). luci-base is built first
+# because it provides the po2lmo host tool that luci.mk compiles the translations with; NO_DEPS
+# then keeps the application build from resolving wifisync (and with it hostapd and the kernel).
+make package/feeds/luci/luci-base/compile V=s -j$(nproc)
+make package/feeds/wifisync/luci-app-wifisync/compile NO_DEPS=1 V=s -j$(nproc)
+
 find bin/packages -name '*.apk' -o -name '*.ipk'
 ```
 
+`WIFISYNC_HOST_RUST=1` makes the package cross-compile with the Rust toolchain already on the
+host (plus the target's `rust-std` from `rustup target add`); `PKG_BUILD_DEPENDS` then no longer
+contains `rust/host`. Without it the package keeps the official behaviour and depends on
+`feeds/packages/lang/rust`'s `rust/host`, which compiles rustc + LLVM from source — 30–90 minutes
+per architecture. `release.yml` always sets it, so that a release takes minutes per architecture
+instead of hours.
+
 > Starting with OpenWrt 25.12 the default package manager is **apk** (it was
-> opkg before), and the artifact format follows the branch automatically.
-> This path builds `rust/host` (the rustc bootstrap) from source inside the SDK
-> and takes roughly 30–90 minutes per architecture, which is why
-> `openwrt-packages.yml` only runs on **manual dispatch / a monthly schedule**.
+> opkg before), and the artifact format follows the branch automatically:
+> 25.12 produces `.apk`, 24.10 produces `.ipk`.
+> `release.yml` builds exactly these packages, from the SDK it downloads for the architecture; it is
+> started by hand with the tag to publish (see section 5).
 
 To build inside your own OpenWrt build tree:
 
@@ -188,11 +221,27 @@ A: Trim it as needed: `[profile.release]` already enables
 LTO/`opt-level=z`/`panic=abort`/`strip`. If it still exceeds the gate, consider
 nightly `-Z build-std` with `panic_immediate_abort` (not enabled in CI yet).
 
-**Q: Why a separate `openwrt-packages.yml`?**
-A: Because it must build the rustc bootstrap from source inside the SDK
-(30–90 minutes per architecture), which does not belong on the per-commit
-pipeline. The daily CI already proves "musl buildable + correct architecture"
-via path A.
+**Q: How do I publish a release?**
+A: Run the `release` workflow from the Actions page and type the tag to publish
+(for example `v0.1.0`). The tag is created at the commit the run was dispatched
+from when it does not exist yet, and a release that already exists for that tag
+is deleted and replaced. The packages are release artifacts (14 architecture
+jobs produce a few hundred MB), which is why `ci.yml` stays limited to source
+checks and `release.yml` owns the packaging.
+
+**Q: How long does one package build take?**
+A: `release.yml` uses the host Rust toolchain (`WIFISYNC_HOST_RUST=1`) and builds only the package
+it asked for, so the Rust part is a cross-compile of a few tens of seconds; the time is dominated
+by the SDK download and the feeds. Building the SDK's `rust/host` instead would add 30–90 minutes
+per architecture (rustc + LLVM from source) — which is why `WIFISYNC_HOST_RUST=1` is set on every
+build of this package, including the LuCI job, where `wifisync` is built as a dependency of
+`luci-app-wifisync`.
+
+**Q: Which OpenWrt releases are published?**
+A: Only 24.10 (`.ipk` / opkg) and 25.12 (`.apk` / apk), each for the seven
+package architectures of section 1. Both branches are covered by the same
+`scripts/openwrt-arch.sh` mapping, and the SDK target/subtarget names are the
+same on both.
 
 **Q: Where does relay mode show up?**
 A: See the "Wi-Fi & KVR" page description in [`FRONTEND.md`](FRONTEND.md) and M6 in

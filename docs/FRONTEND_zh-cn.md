@@ -126,7 +126,7 @@ luci/luci-app-wifisync/
   来源禁用原因、角色调整提示、备份/恢复摘要、apply/gateway 提示、探测详情等，均以结构化消息
   `{ key, params }` 形式下发（见 `wifisync-core::message`）。`common.js` 中的 `MESSAGES` 表把每个
   key 映射为 `_('英文模板，含 %{param}')`，由 `ws.message()`、`ws.planText()`、`ws.errorText()`
-  渲染；两侧的 key 集合由 CI 比对，不会漂移。
+  渲染；两侧的 key 集合需在改动时任一侧时手工核对（属评审步骤，不再由 CI 自动比对）。
 * CLI 与服务日志保持**纯英文**、不参与翻译 —— 本地化只发生在这里的视图中，因此诊断页会直接
   显示英文日志行（见 `AGENTS.md` 的 `CLI` 一节）。
 
@@ -134,16 +134,17 @@ luci/luci-app-wifisync/
 
 ## 8. 验收与测试
 
-* **静态检查（CI）**：对所有视图文件跑 `node --check`，并对 `menu.d`、`acl.d` 做 JSON 校验。
+* **静态检查（评审）**：提交前端改动前对所有视图文件跑 `node --check`，并对 `menu.d`、`acl.d` 做 JSON 校验。
 * **翻译覆盖检查**：视图中每个 `_('…')` 字符串都必须在各 `po/*` 词条表中有对应 `msgid`
   （当前 `zh_Hans` 词条已全覆盖；菜单标题由 `menu.d` 提取）。
 * **消息键一致性检查**：后端发出的每个 key（`Message::new("…")`）必须在 `common.js` 的
-  `MESSAGES` 表中存在，反之亦然（由 CI 比对）。
+  `MESSAGES` 表中存在，反之亦然（评审时比对）。
 * **ACL 走查**：`ubus -v list wifisync` 必须与 `common.js` 中的声明一致，且每个方法在 ACL 文件
   中落在正确的读/写分组。
 * **人工/浏览器回归**：`admin/services/wifisync` 下 8 个页面均可打开；非 AP 角色的 dry-run 为空；
   准入批准/拒绝流程可用；备份校验/恢复可用；非纯 AP 组合下网桥页隐藏或为空。
-* **打包验证**：CI 中用 `openwrt/gh-action-sdk` 构建 `luci-app-wifisync`，验证 feed 包结构。
+* **打包验证**：`release.yml` 用官方 SDK 为 OpenWrt 24.10（`.ipk`）与 25.12（`.apk`）构建
+  `luci-app-wifisync`，验证 feed 包结构。
 
 ---
 

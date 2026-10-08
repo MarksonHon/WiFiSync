@@ -137,8 +137,8 @@ Menu group: **Services → WifiSync** (`admin/services/wifisync`).
   backup/restore summaries, apply/gateway messages and probe details arrive as structured
   messages `{ key, params }` (see `wifisync-core::message`). `common.js` holds the `MESSAGES`
   table mapping every key to an `_('English template with %{param}')` string, and
-  `ws.message()`, `ws.planText()` and `ws.errorText()` render them. Both key sets are compared
-  in CI, so the backend and the front end cannot drift apart.
+  `ws.message()`, `ws.planText()` and `ws.errorText()` render them. Both key sets must be kept in
+  sync by hand when either side changes (the comparison is a review step, not a CI job).
 * The CLI and the service log are **plain English** and never translated — localization only
   happens here in the views, so the diagnostics page shows English log lines (see `AGENTS.md`).
 
@@ -146,20 +146,20 @@ Menu group: **Services → WifiSync** (`admin/services/wifisync`).
 
 ## 8. Acceptance and testing
 
-* **Static checks (CI)**: `node --check` on every view file, plus JSON validation of `menu.d` and
-  `acl.d`.
+* **Static checks (review)**: run `node --check` on every view file and validate `menu.d` /
+  `acl.d` as JSON before submitting a front-end change.
 * **Translation coverage**: every `_('…')` string in the views must have a matching `msgid` in
   each `po/*` catalog (the `zh_Hans` catalog is exhaustive; menu titles are extracted from
   `menu.d`).
 * **Message key consistency**: every key emitted by the backend (`Message::new("…")`) must exist
-  in the `MESSAGES` table of `common.js` and vice versa (checked in CI).
+  in the `MESSAGES` table of `common.js` and vice versa (compared during review).
 * **ACL walkthrough**: `ubus -v list wifisync` must match the declarations in `common.js`, and
   each method must fall into the correct read/write group in the ACL file.
 * **Manual/browser regression**: every page loads under `admin/services/wifisync`; a non-AP role
   shows an empty dry-run; the admission approve/reject flow works; backup verify/restore works;
   the Bridge page is hidden/empty for non-AP combinations.
-* **Packaging**: the CI job that builds `luci-app-wifisync` with `openwrt/gh-action-sdk` validates
-  the feed package layout.
+* **Packaging**: `release.yml` builds `luci-app-wifisync` with the official SDK for OpenWrt 24.10
+  (`.ipk`) and 25.12 (`.apk`), which validates the feed package layout.
 
 ---
 
