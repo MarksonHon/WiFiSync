@@ -41,7 +41,7 @@ define Package/wifisync
   CATEGORY:=Network
   TITLE:=WiFiSync — home LAN (wired + wireless) networking tool
   URL:=https://github.com/openwrt-wifisync/wifisync
-  DEPENDS:=$(RUST_ARCH_DEPENDS) +wpad +kmod-br-netfilter
+  DEPENDS:=$(RUST_ARCH_DEPENDS) +libc +libgcc +wpad +kmod-br-netfilter
 endef
 
 define Package/wifisync/description
@@ -92,6 +92,16 @@ define Package/wifisync/prerm
 	[ -x "$${IPKG_INSTROOT}/usr/bin/wifisync" ] || exit 0
 	$${IPKG_INSTROOT}/etc/init.d/wifisync stop >/dev/null 2>&1 || true
 	exit 0
+endef
+
+# The binary links against the device's musl libc and libgcc (rust-values.mk disables crt-static),
+# and package-pack.mk refuses a package whose files need a library that none of its dependencies
+# provides. Both live in the toolchain meta package, which a release build does not build (see the
+# release workflow), so the library names are listed here as well. The official feeds do the same
+# for packages with files they do not build themselves.
+define Package/wifisync/extra_provides
+	echo libc.so
+	echo libgcc_s.so.1
 endef
 
 $(eval $(call BuildPackage,wifisync))
