@@ -97,11 +97,14 @@ endef
 # The binary links against the device's musl libc and libgcc (rust-values.mk disables crt-static),
 # and package-pack.mk refuses a package whose files need a library that none of its dependencies
 # provides. Both live in the toolchain meta package, which a release build does not build (see the
-# release workflow), so the library names are listed here as well. The official feeds do the same
+# release workflow), so the library names are listed here as well; the official feeds do the same
 # for packages with files they do not build themselves.
+#
+# This definition has to stay on a single line: package-pack.mk expands it in the middle of a
+# continued shell statement ("done; $(Package/<name>/extra_provides) \"), where a second line
+# injects a newline and breaks the syntax.
 define Package/wifisync/extra_provides
-	echo libc.so
-	echo libgcc_s.so.1
+	echo libc.so libgcc_s.so.1 | tr ' ' '\n'
 endef
 
 $(eval $(call BuildPackage,wifisync))
